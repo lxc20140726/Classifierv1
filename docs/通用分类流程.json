@@ -1,0 +1,248 @@
+{
+  "nodes": [
+    {
+      "id": "n-scanner",
+      "type": "folder-tree-scanner",
+      "label": "目录树扫描器",
+      "config": {
+        "source_dir": ""
+      },
+      "inputs": {
+        "source_dir": {
+          "link_source": {
+            "source_node_id": "folder-picker-2",
+            "source_port": "path"
+          }
+        }
+      },
+      "ui_position": {
+        "x": -250,
+        "y": 594
+      },
+      "enabled": true
+    },
+    {
+      "id": "folder-picker-2",
+      "type": "folder-picker",
+      "label": "文件夹选择器",
+      "config": {
+        "source_mode": "folders",
+        "paths": [],
+        "saved_folder_ids": [],
+        "folder_ids": [],
+        "saved_folder_id": "5b656386-2c6d-41ff-86be-bf269397dc30",
+        "path": ""
+      },
+      "inputs": {},
+      "ui_position": {
+        "x": -1011,
+        "y": 504
+      },
+      "enabled": true
+    },
+    {
+      "id": "file-tree-classifier-4",
+      "type": "file-tree-classifier",
+      "label": "文件树分类器",
+      "config": {},
+      "inputs": {
+        "trees": {
+          "link_source": {
+            "source_node_id": "n-scanner",
+            "source_port": "tree"
+          }
+        }
+      },
+      "ui_position": {
+        "x": 754,
+        "y": 341
+      },
+      "enabled": true
+    },
+    {
+      "id": "ext-ratio-classifier-6",
+      "type": "ext-ratio-classifier",
+      "label": "扩展名分类器",
+      "config": {},
+      "inputs": {
+        "trees": {
+          "link_source": {
+            "source_node_id": "n-scanner",
+            "source_port": "tree"
+          }
+        }
+      },
+      "ui_position": {
+        "x": 761,
+        "y": 758
+      },
+      "enabled": true
+    },
+    {
+      "id": "name-keyword-classifier-7",
+      "type": "name-keyword-classifier",
+      "label": "关键词分类器",
+      "config": {},
+      "inputs": {
+        "trees": {
+          "link_source": {
+            "source_node_id": "n-scanner",
+            "source_port": "tree"
+          }
+        }
+      },
+      "ui_position": {
+        "x": 766,
+        "y": 1181
+      },
+      "enabled": true
+    },
+    {
+      "id": "classification-writer-7",
+      "type": "classification-writer",
+      "label": "分类写入器",
+      "config": {},
+      "inputs": {
+        "entries": {
+          "link_source": {
+            "source_node_id": "signal-aggregator-8",
+            "source_port": "entries"
+          }
+        }
+      },
+      "ui_position": {
+        "x": 1890,
+        "y": 536
+      },
+      "enabled": true
+    },
+    {
+      "id": "signal-aggregator-8",
+      "type": "signal-aggregator",
+      "label": "信号聚合器",
+      "config": {},
+      "inputs": {
+        "signal_ft": {
+          "link_source": {
+            "source_node_id": "file-tree-classifier-4",
+            "source_port": "signal"
+          }
+        },
+        "signal_ext": {
+          "link_source": {
+            "source_node_id": "ext-ratio-classifier-6",
+            "source_port": "signal"
+          }
+        },
+        "trees": {
+          "link_source": {
+            "source_node_id": "n-scanner",
+            "source_port": "tree"
+          }
+        },
+        "signal_kw": {
+          "link_source": {
+            "source_node_id": "name-keyword-classifier-7",
+            "source_port": "signal"
+          }
+        }
+      },
+      "ui_position": {
+        "x": 1620,
+        "y": 915
+      },
+      "enabled": true
+    },
+    {
+      "id": "classification-db-result-preview-8",
+      "type": "classification-db-result-preview",
+      "label": "分类落库结果预览",
+      "config": {},
+      "inputs": {
+        "entries": {
+          "link_source": {
+            "source_node_id": "classification-writer-7",
+            "source_port": "entries"
+          }
+        }
+      },
+      "ui_position": {
+        "x": 2276,
+        "y": 551
+      },
+      "enabled": true
+    }
+  ],
+  "edges": [
+    {
+      "id": "xy-edge__folder-picker-2out-1-n-scannerin-0",
+      "source": "folder-picker-2",
+      "source_port": "path",
+      "target": "n-scanner",
+      "target_port": "source_dir"
+    },
+    {
+      "id": "xy-edge__n-scannerout-0-file-tree-classifier-4in-0",
+      "source": "n-scanner",
+      "source_port": "tree",
+      "target": "file-tree-classifier-4",
+      "target_port": "trees"
+    },
+    {
+      "id": "xy-edge__n-scannerout-0-name-keyword-classifier-7in-0",
+      "source": "n-scanner",
+      "source_port": "tree",
+      "target": "name-keyword-classifier-7",
+      "target_port": "trees"
+    },
+    {
+      "id": "xy-edge__n-scannerout-0-ext-ratio-classifier-6in-0",
+      "source": "n-scanner",
+      "source_port": "tree",
+      "target": "ext-ratio-classifier-6",
+      "target_port": "trees"
+    },
+    {
+      "id": "xy-edge__file-tree-classifier-4out-0-signal-aggregator-8in-2",
+      "source": "file-tree-classifier-4",
+      "source_port": "signal",
+      "target": "signal-aggregator-8",
+      "target_port": "signal_ft"
+    },
+    {
+      "id": "xy-edge__ext-ratio-classifier-6out-0-signal-aggregator-8in-3",
+      "source": "ext-ratio-classifier-6",
+      "source_port": "signal",
+      "target": "signal-aggregator-8",
+      "target_port": "signal_ext"
+    },
+    {
+      "id": "xy-edge__n-scannerout-0-signal-aggregator-8in-0",
+      "source": "n-scanner",
+      "source_port": "tree",
+      "target": "signal-aggregator-8",
+      "target_port": "trees"
+    },
+    {
+      "id": "xy-edge__name-keyword-classifier-7out-0-signal-aggregator-8in-1",
+      "source": "name-keyword-classifier-7",
+      "source_port": "signal",
+      "target": "signal-aggregator-8",
+      "target_port": "signal_kw"
+    },
+    {
+      "id": "xy-edge__signal-aggregator-8out-0-classification-writer-7in-0",
+      "source": "signal-aggregator-8",
+      "source_port": "entries",
+      "target": "classification-writer-7",
+      "target_port": "entries"
+    },
+    {
+      "id": "xy-edge__classification-writer-7out-0-classification-db-result-preview-8in-0",
+      "source": "classification-writer-7",
+      "source_port": "entries",
+      "target": "classification-db-result-preview-8",
+      "target_port": "entries"
+    }
+  ]
+}

@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>方案1迭代版-节点内预览（最终）</title>
+  <style>
+    :root{
+      --fg:#0f172a;
+      --muted:#64748b;
+      --bg:#f8fafc;
+      --card:#ffffff;
+      --line:#0f172a;
+      --ok:#22c55e;
+      --err:#ef4444;
+    }
+
+    *{
+      box-sizing:border-box;
+      font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+    }
+
+    body{
+      margin:0;
+      padding:16px;
+      background:var(--bg);
+      display:flex;
+      gap:16px;
+      flex-wrap:wrap;
+      color:var(--fg);
+    }
+
+    /* 模拟现有节点卡片风格 */
+    .node{
+      width:300px;
+      border:2px solid var(--line);
+      background:var(--card);
+    }
+
+    .hd{
+      padding:8px 10px;
+      border-bottom:2px solid var(--line);
+      background:var(--fg);
+      color:#fff;
+      font-size:12px;
+      font-weight:900;
+      letter-spacing:.04em;
+    }
+
+    .bd{
+      padding:10px;
+    }
+
+    /* 分类树（仅保留目录分类本体） */
+    .tree{
+      border:2px solid var(--line);
+      background:#f8fafc;
+      padding:6px;
+      max-height:240px;
+      overflow:auto;
+    }
+
+    .row{
+      display:flex;
+      justify-content:space-between;
+      gap:6px;
+      padding:4px 2px;
+      font-size:11px;
+    }
+
+    .sub{
+      padding-left:14px;
+      color:#334155;
+    }
+
+    .tag{
+      font-size:10px;
+      padding:1px 6px;
+      border:2px solid var(--line);
+      background:#fff;
+      white-space:nowrap;
+    }
+
+    .tag.video{ background:#dbeafe; }
+    .tag.manga{ background:#f3e8ff; }
+    .tag.photo{ background:#dcfce7; }
+    .tag.other{ background:#e5e7eb; }
+
+    /* 处理结果：按目录链路显示 */
+    .chain-list{
+      border:2px solid var(--line);
+      background:#f8fafc;
+      padding:6px;
+      max-height:240px;
+      overflow:auto;
+    }
+
+    .chain-row{
+      display:flex;
+      align-items:center;
+      gap:4px;
+      padding:6px 2px;
+      border-bottom:1px dashed #cbd5e1;
+      font-size:11px;
+      line-height:1.4;
+      white-space:nowrap;
+    }
+
+    .chain-row:last-child{
+      border-bottom:0;
+    }
+
+    .chain-cat{
+      font-weight:800;
+      border:2px solid var(--line);
+      background:#fff;
+      padding:0 4px;
+      flex:0 0 auto;
+    }
+
+    .chain-dir{
+      font-weight:700;
+      max-width:76px;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      flex:0 0 auto;
+    }
+
+    .chain-flow{
+      display:flex;
+      align-items:center;
+      min-width:0;
+      overflow-x:auto;
+      padding-bottom:2px;
+    }
+
+    .step{
+      font-size:10px;
+      font-weight:700;
+      border:2px solid var(--line);
+      background:#fff;
+      padding:0 4px;
+      flex:0 0 auto;
+    }
+
+    .step.ok{ background:#dcfce7; }
+    .step.err{ background:#fee2e2; }
+
+    .arrow{
+      color:#64748b;
+      font-weight:700;
+      padding:0 1px;
+      flex:0 0 auto;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 节点1：分类落库结果预览 -->
+  <section class="node">
+    <div class="hd">分类落库结果预览</div>
+    <div class="bd">
+      <div class="tree">
+        <div class="row">
+          <span>entries/欧美/电影合集</span>
+          <span class="tag video">video 0.93</span>
+        </div>
+        <div class="row sub">
+          <span>Dune 2021</span>
+          <span class="tag video">video 0.97</span>
+        </div>
+        <div class="row sub">
+          <span>Interstellar 2014</span>
+          <span class="tag video">video 0.95</span>
+        </div>
+
+        <div class="row">
+          <span>entries/日漫/长篇</span>
+          <span class="tag manga">manga 0.91</span>
+        </div>
+        <div class="row sub">
+          <span>OnePiece/Vol01</span>
+          <span class="tag manga">manga 0.90</span>
+        </div>
+
+        <div class="row">
+          <span>entries/写真/模特A</span>
+          <span class="tag photo">photo 0.88</span>
+        </div>
+        <div class="row">
+          <span>entries/杂项/未识别</span>
+          <span class="tag other">other 0.42</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 节点2：处理结果预览 -->
+  <section class="node">
+    <div class="hd">处理结果预览</div>
+    <div class="bd">
+      <div class="chain-list">
+        <div class="chain-row">
+          <span class="chain-cat">【video】</span>
+          <span class="chain-dir">目录1</span>
+          <span>:</span>
+          <span class="chain-flow">
+            <span class="step ok">rename-node</span>
+            <span class="arrow">——</span>
+            <span class="step ok">move-node</span>
+            <span class="arrow">——</span>
+            <span class="step err">thumbnail-node</span>
+          </span>
+        </div>
+
+        <div class="chain-row">
+          <span class="chain-cat">【manga】</span>
+          <span class="chain-dir">目录2</span>
+          <span>:</span>
+          <span class="chain-flow">
+            <span class="step ok">rename-node</span>
+            <span class="arrow">——</span>
+            <span class="step ok">compress-node</span>
+            <span class="arrow">——</span>
+            <span class="step ok">move-node</span>
+          </span>
+        </div>
+
+        <div class="chain-row">
+          <span class="chain-cat">【other】</span>
+          <span class="chain-dir">目录3</span>
+          <span>:</span>
+          <span class="chain-flow">
+            <span class="step err">rename-node</span>
+            <span class="arrow">——</span>
+            <span class="step err">move-node</span>
+            <span class="arrow">——</span>
+            <span class="step ok">audit-log</span>
+          </span>
+        </div>
+
+        <div class="chain-row">
+          <span class="chain-cat">【photo】</span>
+          <span class="chain-dir">目录4</span>
+          <span>:</span>
+          <span class="chain-flow">
+            <span class="step ok">rename-node</span>
+            <span class="arrow">——</span>
+            <span class="step ok">move-node</span>
+            <span class="arrow">——</span>
+            <span class="step ok">audit-log</span>
+          </span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</body>
+</html>

@@ -1,0 +1,422 @@
+{
+  "nodes": [
+    {
+      "id": "g-split",
+      "type": "folder-splitter",
+      "label": "文件夹拆分器",
+      "config": {
+        "split_depth": 1,
+        "split_mixed": true
+      },
+      "inputs": {
+        "entry": {
+          "link_source": {
+            "source_node_id": "db-subtree-reader-11",
+            "source_port": "entry"
+          }
+        }
+      },
+      "ui_position": {
+        "x": -1445,
+        "y": 364
+      },
+      "enabled": true
+    },
+    {
+      "id": "g-router",
+      "type": "category-router",
+      "label": "类别路由器",
+      "config": {},
+      "inputs": {
+        "items": {
+          "link_source": {
+            "source_node_id": "g-split",
+            "source_port": "items"
+          }
+        }
+      },
+      "ui_position": {
+        "x": -563,
+        "y": 372
+      },
+      "enabled": true
+    },
+    {
+      "id": "folder-picker-11",
+      "type": "folder-picker",
+      "label": "文件夹选择器",
+      "config": {
+        "folder_ids": [],
+        "paths": [],
+        "saved_folder_ids": [],
+        "source_mode": "folders",
+        "saved_folder_id": "5b656386-2c6d-41ff-86be-bf269397dc30",
+        "path": ""
+      },
+      "inputs": {},
+      "ui_position": {
+        "x": -3193,
+        "y": 221
+      },
+      "enabled": true
+    },
+    {
+      "id": "db-subtree-reader-11",
+      "type": "db-subtree-reader",
+      "label": "子树读取器",
+      "config": {},
+      "inputs": {
+        "path": {
+          "link_source": {
+            "source_node_id": "folder-picker-11",
+            "source_port": "path"
+          }
+        }
+      },
+      "ui_position": {
+        "x": -2300,
+        "y": 319
+      },
+      "enabled": true
+    },
+    {
+      "id": "thumbnail-node-12",
+      "type": "thumbnail-node",
+      "label": "缩略图节点",
+      "config": {
+        "offset_seconds": 2
+      },
+      "inputs": {
+        "items": {
+          "link_source": {
+            "source_node_id": "move-node-13",
+            "source_port": "items"
+          }
+        }
+      },
+      "ui_position": {
+        "x": 1507,
+        "y": -813
+      },
+      "enabled": true
+    },
+    {
+      "id": "move-node-13",
+      "type": "move-node",
+      "label": "移动节点",
+      "config": {
+        "path_ref_key": "mixed:0",
+        "path_ref_type": "output",
+        "path_suffix": ""
+      },
+      "inputs": {
+        "items": {
+          "link_source": {
+            "source_node_id": "g-router",
+            "source_port": "video"
+          }
+        }
+      },
+      "ui_position": {
+        "x": 411,
+        "y": -910
+      },
+      "enabled": true
+    },
+    {
+      "id": "compress-node-12",
+      "type": "compress-node",
+      "label": "压缩节点",
+      "config": {
+        "path_ref_key": "mixed",
+        "path_ref_type": "output"
+      },
+      "inputs": {
+        "items": {
+          "link_source": {
+            "source_node_id": "g-router",
+            "source_port": "manga"
+          }
+        }
+      },
+      "ui_position": {
+        "x": 436,
+        "y": -143
+      },
+      "enabled": true
+    },
+    {
+      "id": "move-node-12",
+      "type": "move-node",
+      "label": "移动节点",
+      "config": {
+        "path_ref_key": "manga:0",
+        "path_ref_type": "output",
+        "path_suffix": ""
+      },
+      "inputs": {
+        "items": {
+          "link_source": {
+            "source_node_id": "compress-node-12",
+            "source_port": "archive_items"
+          }
+        }
+      },
+      "ui_position": {
+        "x": 1293,
+        "y": -118
+      },
+      "enabled": true
+    },
+    {
+      "id": "compress-node-13",
+      "type": "compress-node",
+      "label": "压缩节点",
+      "config": {
+        "path_ref_key": "mixed",
+        "path_ref_type": "output"
+      },
+      "inputs": {
+        "items": {
+          "link_source": {
+            "source_node_id": "g-router",
+            "source_port": "photo"
+          }
+        }
+      },
+      "ui_position": {
+        "x": 422,
+        "y": 585
+      },
+      "enabled": true
+    },
+    {
+      "id": "move-node-10",
+      "type": "move-node",
+      "label": "移动节点",
+      "config": {
+        "path_ref_key": "photo:0",
+        "path_ref_type": "output",
+        "path_suffix": ""
+      },
+      "inputs": {
+        "items": {
+          "link_source": {
+            "source_node_id": "compress-node-13",
+            "source_port": "archive_items"
+          }
+        }
+      },
+      "ui_position": {
+        "x": 1327,
+        "y": 619
+      },
+      "enabled": true
+    },
+    {
+      "id": "mixed-leaf-router-11",
+      "type": "mixed-leaf-router",
+      "label": "混合叶子分流器",
+      "config": {},
+      "inputs": {
+        "items": {
+          "link_source": {
+            "source_node_id": "g-router",
+            "source_port": "mixed_leaf"
+          }
+        }
+      },
+      "ui_position": {
+        "x": 237,
+        "y": 1453
+      },
+      "enabled": true
+    },
+    {
+      "id": "thumbnail-node-13",
+      "type": "thumbnail-node",
+      "label": "缩略图节点",
+      "config": {},
+      "inputs": {
+        "items": {
+          "link_source": {
+            "source_node_id": "move-node-14",
+            "source_port": "items"
+          }
+        }
+      },
+      "ui_position": {
+        "x": 1972,
+        "y": 1405
+      },
+      "enabled": true
+    },
+    {
+      "id": "move-node-14",
+      "type": "move-node",
+      "label": "移动节点",
+      "config": {
+        "path_ref_key": "mixed",
+        "path_ref_type": "output"
+      },
+      "inputs": {
+        "items": {
+          "link_source": {
+            "source_node_id": "mixed-leaf-router-11",
+            "source_port": "video"
+          }
+        }
+      },
+      "ui_position": {
+        "x": 1133,
+        "y": 1379
+      },
+      "enabled": true
+    },
+    {
+      "id": "compress-node-14",
+      "type": "compress-node",
+      "label": "压缩节点",
+      "config": {
+        "path_ref_key": "mixed",
+        "path_ref_type": "output"
+      },
+      "inputs": {
+        "items": {
+          "link_source": {
+            "source_node_id": "mixed-leaf-router-11",
+            "source_port": "photo"
+          }
+        }
+      },
+      "ui_position": {
+        "x": 1185,
+        "y": 2122
+      },
+      "enabled": true
+    },
+    {
+      "id": "move-node-15",
+      "type": "move-node",
+      "label": "移动节点",
+      "config": {
+        "path_ref_key": "photo:0",
+        "path_ref_type": "output",
+        "path_suffix": ""
+      },
+      "inputs": {
+        "items": {
+          "link_source": {
+            "source_node_id": "compress-node-14",
+            "source_port": "items"
+          }
+        }
+      },
+      "ui_position": {
+        "x": 1984,
+        "y": 2148
+      },
+      "enabled": true
+    }
+  ],
+  "edges": [
+    {
+      "id": "g-e2",
+      "source": "g-split",
+      "source_port": "items",
+      "target": "g-router",
+      "target_port": "items"
+    },
+    {
+      "id": "xy-edge__folder-picker-11out-1-db-subtree-reader-11in-0",
+      "source": "folder-picker-11",
+      "source_port": "path",
+      "target": "db-subtree-reader-11",
+      "target_port": "path"
+    },
+    {
+      "id": "xy-edge__db-subtree-reader-11out-0-g-splitin-0",
+      "source": "db-subtree-reader-11",
+      "source_port": "entry",
+      "target": "g-split",
+      "target_port": "entry"
+    },
+    {
+      "id": "xy-edge__g-routerout-0-move-node-13in-0",
+      "source": "g-router",
+      "source_port": "video",
+      "target": "move-node-13",
+      "target_port": "items"
+    },
+    {
+      "id": "xy-edge__move-node-13out-0-thumbnail-node-12in-0",
+      "source": "move-node-13",
+      "source_port": "items",
+      "target": "thumbnail-node-12",
+      "target_port": "items"
+    },
+    {
+      "id": "xy-edge__g-routerout-1-compress-node-12in-0",
+      "source": "g-router",
+      "source_port": "manga",
+      "target": "compress-node-12",
+      "target_port": "items"
+    },
+    {
+      "id": "xy-edge__compress-node-12out-1-move-node-12in-0",
+      "source": "compress-node-12",
+      "source_port": "archive_items",
+      "target": "move-node-12",
+      "target_port": "items"
+    },
+    {
+      "id": "xy-edge__g-routerout-2-compress-node-13in-0",
+      "source": "g-router",
+      "source_port": "photo",
+      "target": "compress-node-13",
+      "target_port": "items"
+    },
+    {
+      "id": "xy-edge__compress-node-13out-1-move-node-10in-0",
+      "source": "compress-node-13",
+      "source_port": "archive_items",
+      "target": "move-node-10",
+      "target_port": "items"
+    },
+    {
+      "id": "xy-edge__g-routerout-4-mixed-leaf-router-11in-0",
+      "source": "g-router",
+      "source_port": "mixed_leaf",
+      "target": "mixed-leaf-router-11",
+      "target_port": "items"
+    },
+    {
+      "id": "xy-edge__mixed-leaf-router-11out-0-move-node-14in-0",
+      "source": "mixed-leaf-router-11",
+      "source_port": "video",
+      "target": "move-node-14",
+      "target_port": "items"
+    },
+    {
+      "id": "xy-edge__move-node-14out-0-thumbnail-node-13in-0",
+      "source": "move-node-14",
+      "source_port": "items",
+      "target": "thumbnail-node-13",
+      "target_port": "items"
+    },
+    {
+      "id": "xy-edge__mixed-leaf-router-11out-1-compress-node-14in-0",
+      "source": "mixed-leaf-router-11",
+      "source_port": "photo",
+      "target": "compress-node-14",
+      "target_port": "items"
+    },
+    {
+      "id": "xy-edge__compress-node-14out-0-move-node-15in-0",
+      "source": "compress-node-14",
+      "source_port": "items",
+      "target": "move-node-15",
+      "target_port": "items"
+    }
+  ]
+}

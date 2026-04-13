@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Node Prototype 3</title>
+  <style>
+    *{box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}
+    body{margin:0;padding:16px;background:#f8fafc;display:flex;gap:16px;flex-wrap:wrap}
+    .node{width:300px;border:2px solid #0f172a;background:#fff}
+    .hd{padding:8px 10px;border-bottom:2px solid #0f172a;background:#0f172a;color:#fff;font-size:12px;font-weight:800}
+    .bd{padding:10px}
+    .alert{border:2px solid #7f1d1d;background:#fee2e2;color:#7f1d1d;padding:8px;font-size:11px;font-weight:700;margin-bottom:8px}
+    .box{border:2px solid #0f172a;background:#f8fafc;padding:8px;margin-bottom:8px}
+    .row{display:flex;justify-content:space-between;font-size:11px;padding:3px 0}
+    .badge{font-size:10px;padding:1px 6px;border:2px solid #0f172a;background:#fff}
+    .err{background:#fee2e2}.ok{background:#dcfce7}.warn{background:#fef3c7}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#475569;font-size:10px}
+  </style>
+</head>
+<body>
+
+  <section class="node">
+    <div class="hd">分类落库结果预览（告警模式）</div>
+    <div class="bd">
+      <div class="alert">低置信度目录 3 个（建议人工复核）</div>
+      <div class="box">
+        <div class="row"><span>entries/杂项/未识别</span><span class="badge warn">other 0.42</span></div>
+        <div class="mono">source: file-tree-classifier</div>
+      </div>
+      <div class="box">
+        <div class="row"><span>entries/欧美/电影合集/坏片源</span><span class="badge warn">video 0.61</span></div>
+        <div class="mono">source: ext-ratio-classifier</div>
+      </div>
+      <div class="box" style="margin-bottom:0">
+        <div class="row"><b>总条目</b><b>24</b></div>
+        <div class="row"><span>Top分类</span><span>video (50%)</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="node">
+    <div class="hd">处理结果预览（告警模式）</div>
+    <div class="bd">
+      <div class="alert">失败目录 2 个 / 失败步骤 5 个</div>
+      <div class="box">
+        <div class="row"><span>/entries/欧美/电影合集/坏片源</span><span class="badge err">failed x3</span></div>
+        <div class="mono">thumbnail-node: ffmpeg exit status 1</div>
+      </div>
+      <div class="box">
+        <div class="row"><span>/entries/杂项/未识别</span><span class="badge err">failed x2</span></div>
+        <div class="mono">rename-node: invalid name template</div>
+      </div>
+      <div class="box" style="margin-bottom:0">
+        <div class="row"><span>成功目录</span><span class="badge ok">10</span></div>
+        <div class="row"><span>总目录</span><span class="badge">12</span></div>
+      </div>
+    </div>
+  </section>
+
+</body>
+</html>

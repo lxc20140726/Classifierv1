@@ -1,0 +1,25 @@
+services:
+  classifier:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    user: "0:0"
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    environment:
+      CONFIG_DIR: /config
+      SOURCE_DIR: ${SOURCE_DIR}
+      TARGET_DIR: ${TARGET_DIR}
+      MAX_CONCURRENCY: ${MAX_CONCURRENCY:-3}
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      - ${NAS_ROOT}:${NAS_ROOT}:rw
+      - classifier_config:/config
+    tmpfs:
+      - /tmp/work
+    cpus: ${CPU_LIMIT:-2.0}
+    mem_limit: ${MEMORY_LIMIT:-1G}
+    restart: unless-stopped
+
+volumes:
+  classifier_config:

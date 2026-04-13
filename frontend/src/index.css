@@ -1,0 +1,45 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 132 11% 90%; /* #E4E9E5 */
+    --foreground: 0 0% 10%; /* #1A1A1A */
+    --border: 0 0% 10%; /* #1A1A1A */
+    --primary: 135 12% 56%; /* #849C8A */
+    --primary-foreground: 0 0% 10%; /* #1A1A1A */
+    --muted: 135 13% 85%; /* #D4DCD6 */
+    --muted-foreground: 136 7% 31%; /* #4A554D */
+    --accent: 0 0% 100%; /* #FFFFFF */
+    --accent-foreground: 0 0% 10%; /* #1A1A1A */
+    --card: 0 0% 100%; /* #FFFFFF */
+    --radius: 0.125rem; /* 2px */
+  }
+
+  .dark {
+    --background: 0 0% 10%; /* #1A1A1A */
+    --foreground: 132 11% 90%; /* #E4E9E5 */
+    --border: 132 11% 90%; /* #E4E9E5 */
+    --primary: 135 12% 56%; /* #849C8A */
+    --primary-foreground: 0 0% 10%; /* #1A1A1A */
+    --muted: 136 7% 20%; 
+    --muted-foreground: 135 13% 70%;
+    --accent: 136 7% 15%;
+    --accent-foreground: 132 11% 90%;
+    --card: 136 7% 12%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply m-0 bg-background text-foreground antialiased;
+    font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+  }
+
+  #root {
+    min-height: 100vh;
+  }
+}
