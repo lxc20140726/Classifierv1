@@ -153,6 +153,59 @@ func TestFolderSplitterExecutorMixedSkipsPromoSubdirs(t *testing.T) {
 	}
 }
 
+func TestFolderSplitterExecutorInheritsRootFolderForGenericContainerChild(t *testing.T) {
+	t.Parallel()
+
+	executor := newFolderSplitterExecutor()
+	out, err := executor.Execute(context.Background(), NodeExecutionInput{
+		Node: repository.WorkflowGraphNode{
+			Config: map[string]any{"split_with_subdirs": true},
+		},
+		Inputs: testInputs(map[string]any{
+			"entry": ClassifiedEntry{
+				FolderID: "folder-root",
+				Path:     "/root/album-a",
+				Name:     "album-a",
+				Category: "video",
+				Subtree: []ClassifiedEntry{
+					{
+						FolderID: "folder-videos",
+						Path:     "/root/album-a/Videos",
+						Name:     "Videos",
+						Category: "video",
+						Files: []FileEntry{
+							{Name: "clip-01.mp4", Ext: ".mp4", SizeBytes: 10},
+						},
+					},
+				},
+			},
+		}),
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	items, ok := out.Outputs["items"].Value.([]ProcessingItem)
+	if !ok {
+		t.Fatalf("output type = %T, want []ProcessingItem", out.Outputs["items"].Value)
+	}
+	if len(items) != 1 {
+		t.Fatalf("len(items) = %d, want 1", len(items))
+	}
+	if items[0].SourcePath != "/root/album-a/Videos" {
+		t.Fatalf("items[0].SourcePath = %q, want /root/album-a/Videos", items[0].SourcePath)
+	}
+	if items[0].FolderID != "folder-root" {
+		t.Fatalf("items[0].FolderID = %q, want folder-root", items[0].FolderID)
+	}
+	if items[0].FolderName != "album-a" || items[0].TargetName != "album-a" {
+		t.Fatalf("items[0] folder/target name = %q/%q, want album-a/album-a", items[0].FolderName, items[0].TargetName)
+	}
+	if items[0].RelativePath != "Videos" || items[0].RootPath != "/root/album-a" {
+		t.Fatalf("items[0] relative/root = %q/%q, want Videos//root/album-a", items[0].RelativePath, items[0].RootPath)
+	}
+}
+
 func TestProcessingChainRoutesNonLeafVideoWithPromoSubdirsToMixedLeaf(t *testing.T) {
 	t.Parallel()
 

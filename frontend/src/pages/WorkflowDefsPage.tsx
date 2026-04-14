@@ -20,92 +20,9 @@ export type WorkflowDefsPageProps = Record<string, never>
 
 // ─── Template Graphs ─────────────────────────────────────────────────────────
 
-const TEMPLATE_CLASSIFICATION_ONLY = JSON.stringify({
-  nodes: [
-    { id: 'n-trigger', type: 'trigger', label: '触发器', config: {}, inputs: {}, enabled: true, ui_position: { x: 60, y: 280 } },
-    { id: 'n-scanner', type: 'folder-tree-scanner', label: '目录树扫描器', config: {}, inputs: {}, enabled: true, ui_position: { x: 260, y: 280 } },
-    { id: 'n-kw', type: 'name-keyword-classifier', label: '关键词分类器', config: {}, inputs: {}, enabled: true, ui_position: { x: 520, y: 100 } },
-    { id: 'n-ft', type: 'file-tree-classifier', label: '文件树分类器', config: {}, inputs: {}, enabled: true, ui_position: { x: 520, y: 260 } },
-    { id: 'n-ext', type: 'ext-ratio-classifier', label: '扩展名分类器', config: {}, inputs: {}, enabled: true, ui_position: { x: 520, y: 420 } },
-    { id: 'n-agg', type: 'subtree-aggregator', label: '子树聚合器', config: {}, inputs: {}, enabled: true, ui_position: { x: 780, y: 260 } },
-  ],
-  edges: [
-    { id: 'e1', source: 'n-scanner', source_port: 0, target: 'n-kw', target_port: 0 },
-    { id: 'e2', source: 'n-scanner', source_port: 0, target: 'n-ft', target_port: 0 },
-    { id: 'e3', source: 'n-scanner', source_port: 0, target: 'n-ext', target_port: 0 },
-    { id: 'e4', source: 'n-kw', source_port: 0, target: 'n-agg', target_port: 1 },
-    { id: 'e5', source: 'n-ft', source_port: 0, target: 'n-agg', target_port: 2 },
-    { id: 'e6', source: 'n-ext', source_port: 0, target: 'n-agg', target_port: 3 },
-  ],
-})
+const TEMPLATE_PROCESSING = '{"nodes":[{"id":"g-split","type":"folder-splitter","label":"文件夹拆分器","config":{"split_depth":1,"split_mixed":true},"inputs":{"entry":{"link_source":{"source_node_id":"db-subtree-reader-11","source_port":"entry"}}},"ui_position":{"x":-1445,"y":364},"enabled":true},{"id":"g-router","type":"category-router","label":"类别路由器","config":{},"inputs":{"items":{"link_source":{"source_node_id":"g-split","source_port":"items"}}},"ui_position":{"x":-563,"y":372},"enabled":true},{"id":"folder-picker-11","type":"folder-picker","label":"文件夹选择器","config":{"folder_ids":[],"paths":[],"saved_folder_ids":[],"source_mode":"folders","saved_folder_id":"5b656386-2c6d-41ff-86be-bf269397dc30","path":""},"inputs":{},"ui_position":{"x":-3193,"y":221},"enabled":true},{"id":"db-subtree-reader-11","type":"db-subtree-reader","label":"子树读取器","config":{},"inputs":{"path":{"link_source":{"source_node_id":"folder-picker-11","source_port":"path"}}},"ui_position":{"x":-2300,"y":319},"enabled":true},{"id":"thumbnail-node-12","type":"thumbnail-node","label":"缩略图节点","config":{"offset_seconds":2},"inputs":{"items":{"link_source":{"source_node_id":"move-node-13","source_port":"items"}}},"ui_position":{"x":1507,"y":-813},"enabled":true},{"id":"move-node-13","type":"move-node","label":"移动节点","config":{"path_ref_key":"mixed:0","path_ref_type":"output","path_suffix":""},"inputs":{"items":{"link_source":{"source_node_id":"g-router","source_port":"video"}}},"ui_position":{"x":411,"y":-910},"enabled":true},{"id":"compress-node-12","type":"compress-node","label":"压缩节点","config":{"path_ref_key":"mixed","path_ref_type":"output"},"inputs":{"items":{"link_source":{"source_node_id":"g-router","source_port":"manga"}}},"ui_position":{"x":436,"y":-143},"enabled":true},{"id":"move-node-12","type":"move-node","label":"移动节点","config":{"path_ref_key":"manga:0","path_ref_type":"output","path_suffix":""},"inputs":{"items":{"link_source":{"source_node_id":"compress-node-12","source_port":"archive_items"}}},"ui_position":{"x":1293,"y":-118},"enabled":true},{"id":"compress-node-13","type":"compress-node","label":"压缩节点","config":{"path_ref_key":"mixed","path_ref_type":"output"},"inputs":{"items":{"link_source":{"source_node_id":"g-router","source_port":"photo"}}},"ui_position":{"x":422,"y":585},"enabled":true},{"id":"move-node-10","type":"move-node","label":"移动节点","config":{"path_ref_key":"photo:0","path_ref_type":"output","path_suffix":""},"inputs":{"items":{"link_source":{"source_node_id":"compress-node-13","source_port":"archive_items"}}},"ui_position":{"x":1327,"y":619},"enabled":true},{"id":"mixed-leaf-router-11","type":"mixed-leaf-router","label":"混合叶子分流器","config":{},"inputs":{"items":{"link_source":{"source_node_id":"g-router","source_port":"mixed_leaf"}}},"ui_position":{"x":237,"y":1453},"enabled":true},{"id":"thumbnail-node-13","type":"thumbnail-node","label":"缩略图节点","config":{},"inputs":{"items":{"link_source":{"source_node_id":"move-node-14","source_port":"items"}}},"ui_position":{"x":1972,"y":1405},"enabled":true},{"id":"move-node-14","type":"move-node","label":"移动节点","config":{"path_ref_key":"mixed","path_ref_type":"output"},"inputs":{"items":{"link_source":{"source_node_id":"mixed-leaf-router-11","source_port":"video"}}},"ui_position":{"x":1133,"y":1379},"enabled":true},{"id":"compress-node-14","type":"compress-node","label":"压缩节点","config":{"path_ref_key":"mixed","path_ref_type":"output"},"inputs":{"items":{"link_source":{"source_node_id":"mixed-leaf-router-11","source_port":"photo"}}},"ui_position":{"x":1185,"y":2122},"enabled":true},{"id":"move-node-15","type":"move-node","label":"移动节点","config":{"path_ref_key":"photo:0","path_ref_type":"output","path_suffix":""},"inputs":{"items":{"link_source":{"source_node_id":"compress-node-14","source_port":"archive_items"}}},"ui_position":{"x":1984,"y":2148},"enabled":true}],"edges":[{"id":"g-e2","source":"g-split","source_port":"items","target":"g-router","target_port":"items"},{"id":"xy-edge__folder-picker-11out-1-db-subtree-reader-11in-0","source":"folder-picker-11","source_port":"path","target":"db-subtree-reader-11","target_port":"path"},{"id":"xy-edge__db-subtree-reader-11out-0-g-splitin-0","source":"db-subtree-reader-11","source_port":"entry","target":"g-split","target_port":"entry"},{"id":"xy-edge__g-routerout-0-move-node-13in-0","source":"g-router","source_port":"video","target":"move-node-13","target_port":"items"},{"id":"xy-edge__move-node-13out-0-thumbnail-node-12in-0","source":"move-node-13","source_port":"items","target":"thumbnail-node-12","target_port":"items"},{"id":"xy-edge__g-routerout-1-compress-node-12in-0","source":"g-router","source_port":"manga","target":"compress-node-12","target_port":"items"},{"id":"xy-edge__compress-node-12out-1-move-node-12in-0","source":"compress-node-12","source_port":"archive_items","target":"move-node-12","target_port":"items"},{"id":"xy-edge__g-routerout-2-compress-node-13in-0","source":"g-router","source_port":"photo","target":"compress-node-13","target_port":"items"},{"id":"xy-edge__compress-node-13out-1-move-node-10in-0","source":"compress-node-13","source_port":"archive_items","target":"move-node-10","target_port":"items"},{"id":"xy-edge__g-routerout-4-mixed-leaf-router-11in-0","source":"g-router","source_port":"mixed_leaf","target":"mixed-leaf-router-11","target_port":"items"},{"id":"xy-edge__mixed-leaf-router-11out-0-move-node-14in-0","source":"mixed-leaf-router-11","source_port":"video","target":"move-node-14","target_port":"items"},{"id":"xy-edge__move-node-14out-0-thumbnail-node-13in-0","source":"move-node-14","source_port":"items","target":"thumbnail-node-13","target_port":"items"},{"id":"xy-edge__mixed-leaf-router-11out-1-compress-node-14in-0","source":"mixed-leaf-router-11","source_port":"photo","target":"compress-node-14","target_port":"items"},{"id":"xy-edge__compress-node-14out-0-move-node-15in-0","source":"compress-node-14","source_port":"archive_items","target":"move-node-15","target_port":"items"}]}'
 
-const TEMPLATE_CLASSIFY_AND_MOVE = JSON.stringify({
-  nodes: [
-    { id: 'n-trigger', type: 'trigger', label: '触发器', config: {}, inputs: {}, enabled: true, ui_position: { x: 60, y: 320 } },
-    { id: 'n-scanner', type: 'folder-tree-scanner', label: '目录树扫描器', config: {}, inputs: {}, enabled: true, ui_position: { x: 260, y: 320 } },
-    { id: 'n-kw', type: 'name-keyword-classifier', label: '关键词分类器', config: {}, inputs: {}, enabled: true, ui_position: { x: 520, y: 120 } },
-    { id: 'n-ft', type: 'file-tree-classifier', label: '文件树分类器', config: {}, inputs: {}, enabled: true, ui_position: { x: 520, y: 300 } },
-    { id: 'n-ext', type: 'ext-ratio-classifier', label: '扩展名分类器', config: {}, inputs: {}, enabled: true, ui_position: { x: 520, y: 480 } },
-    { id: 'n-agg', type: 'subtree-aggregator', label: '子树聚合器', config: {}, inputs: {}, enabled: true, ui_position: { x: 780, y: 300 } },
-    { id: 'n-reader', type: 'classification-reader', label: '分类读取器', config: {}, inputs: {}, enabled: true, ui_position: { x: 1120, y: 300 } },
-    { id: 'n-splitter', type: 'folder-splitter', label: '文件夹拆分器', config: {}, inputs: {}, enabled: true, ui_position: { x: 1480, y: 300 } },
-    { id: 'n-router', type: 'category-router', label: '类别路由器', config: {}, inputs: {}, enabled: true, ui_position: { x: 1700, y: 300 } },
-    { id: 'n-move-video', type: 'move-node', label: '移动节点（视频）', config: { path_ref_type: 'output', path_ref_key: 'video', path_suffix: '' }, inputs: {}, enabled: true, ui_position: { x: 1960, y: 100 } },
-    { id: 'n-move-manga', type: 'move-node', label: '移动节点（漫画）', config: { path_ref_type: 'output', path_ref_key: 'manga', path_suffix: '' }, inputs: {}, enabled: true, ui_position: { x: 1960, y: 260 } },
-    { id: 'n-move-photo', type: 'move-node', label: '移动节点（图片）', config: { path_ref_type: 'output', path_ref_key: 'photo', path_suffix: '' }, inputs: {}, enabled: true, ui_position: { x: 1960, y: 420 } },
-    { id: 'n-move-other', type: 'move-node', label: '移动节点（其他）', config: { path_ref_type: 'output', path_ref_key: 'other', path_suffix: '' }, inputs: {}, enabled: true, ui_position: { x: 1960, y: 580 } },
-  ],
-  edges: [
-    { id: 'e1', source: 'n-scanner', source_port: 0, target: 'n-kw', target_port: 0 },
-    { id: 'e2', source: 'n-scanner', source_port: 0, target: 'n-ft', target_port: 0 },
-    { id: 'e3', source: 'n-scanner', source_port: 0, target: 'n-ext', target_port: 0 },
-    { id: 'e4', source: 'n-kw', source_port: 0, target: 'n-agg', target_port: 1 },
-    { id: 'e5', source: 'n-ft', source_port: 0, target: 'n-agg', target_port: 2 },
-    { id: 'e6', source: 'n-ext', source_port: 0, target: 'n-agg', target_port: 3 },
-    { id: 'e7', source: 'n-agg', source_port: 0, target: 'n-reader', target_port: 0 },
-    { id: 'e9', source: 'n-reader', source_port: 0, target: 'n-splitter', target_port: 0 },
-    { id: 'e10', source: 'n-splitter', source_port: 0, target: 'n-router', target_port: 0 },
-    { id: 'e11', source: 'n-router', source_port: 0, target: 'n-move-video', target_port: 0 },
-    { id: 'e12', source: 'n-router', source_port: 1, target: 'n-move-manga', target_port: 0 },
-    { id: 'e13', source: 'n-router', source_port: 2, target: 'n-move-photo', target_port: 0 },
-    { id: 'e14', source: 'n-router', source_port: 3, target: 'n-move-other', target_port: 0 },
-  ],
-})
-
-const TEMPLATE_GENERIC_PROCESSING = JSON.stringify({
-  nodes: [
-    { id: 'g-reader', type: 'classification-reader', label: '分类读取器', config: {}, inputs: {}, enabled: true, ui_position: { x: 80, y: 280 } },
-    { id: 'g-split', type: 'folder-splitter', label: '文件夹拆分器', config: { split_mixed: true, split_depth: 1 }, inputs: { entry: { link_source: { source_node_id: 'g-reader', source_port: 'entry' } } }, enabled: true, ui_position: { x: 320, y: 280 } },
-    { id: 'g-router', type: 'category-router', label: '类别路由器', config: {}, inputs: { items: { link_source: { source_node_id: 'g-split', source_port: 'items' } } }, enabled: true, ui_position: { x: 560, y: 280 } },
-    { id: 'g-rename-video', type: 'rename-node', label: '重命名（视频）', config: { strategy: 'template', template: '{name}' }, inputs: { items: { link_source: { source_node_id: 'g-router', source_port: 'video' } } }, enabled: true, ui_position: { x: 860, y: 60 } },
-    { id: 'g-rename-manga', type: 'rename-node', label: '重命名（漫画）', config: { strategy: 'template', template: '{name}' }, inputs: { items: { link_source: { source_node_id: 'g-router', source_port: 'manga' } } }, enabled: true, ui_position: { x: 860, y: 180 } },
-    { id: 'g-rename-photo', type: 'rename-node', label: '重命名（图片）', config: { strategy: 'template', template: '{name}' }, inputs: { items: { link_source: { source_node_id: 'g-router', source_port: 'photo' } } }, enabled: true, ui_position: { x: 860, y: 300 } },
-    { id: 'g-rename-other', type: 'rename-node', label: '重命名（其他）', config: { strategy: 'template', template: '{name}' }, inputs: { items: { link_source: { source_node_id: 'g-router', source_port: 'other' } } }, enabled: true, ui_position: { x: 860, y: 420 } },
-    { id: 'g-mixed-router', type: 'mixed-leaf-router', label: '混合叶子分流器', config: {}, inputs: { items: { link_source: { source_node_id: 'g-router', source_port: 'mixed_leaf' } } }, enabled: true, ui_position: { x: 860, y: 540 } },
-    { id: 'g-rename-mixed-video', type: 'rename-node', label: '重命名（混合-视频）', config: { strategy: 'template', template: '{name}' }, inputs: { items: { link_source: { source_node_id: 'g-mixed-router', source_port: 'video' } } }, enabled: true, ui_position: { x: 1160, y: 520 } },
-    { id: 'g-rename-mixed-photo', type: 'rename-node', label: '重命名（混合-图片）', config: { strategy: 'template', template: '{name}' }, inputs: { items: { link_source: { source_node_id: 'g-mixed-router', source_port: 'photo' } } }, enabled: true, ui_position: { x: 1160, y: 640 } },
-    { id: 'g-collect', type: 'collect-node', label: '收集节点', config: {}, inputs: { items_1: { link_source: { source_node_id: 'g-rename-video', source_port: 'items' } }, items_2: { link_source: { source_node_id: 'g-rename-manga', source_port: 'items' } }, items_3: { link_source: { source_node_id: 'g-rename-photo', source_port: 'items' } }, items_4: { link_source: { source_node_id: 'g-rename-other', source_port: 'items' } }, items_5: { link_source: { source_node_id: 'g-rename-mixed-video', source_port: 'items' } }, items_6: { link_source: { source_node_id: 'g-rename-mixed-photo', source_port: 'items' } } }, enabled: true, ui_position: { x: 1460, y: 320 } },
-    { id: 'g-move', type: 'move-node', label: '移动节点', config: { path_ref_type: 'output', path_ref_key: 'mixed', path_suffix: '.processed', move_unit: 'folder', conflict_policy: 'auto_rename' }, inputs: { items: { link_source: { source_node_id: 'g-collect', source_port: 'items' } } }, enabled: true, ui_position: { x: 1720, y: 320 } },
-  ],
-  edges: [
-    { id: 'g-e1', source: 'g-reader', source_port: 'entry', target: 'g-split', target_port: 'entry' },
-    { id: 'g-e2', source: 'g-split', source_port: 'items', target: 'g-router', target_port: 'items' },
-    { id: 'g-e3', source: 'g-router', source_port: 'video', target: 'g-rename-video', target_port: 'items' },
-    { id: 'g-e4', source: 'g-router', source_port: 'manga', target: 'g-rename-manga', target_port: 'items' },
-    { id: 'g-e5', source: 'g-router', source_port: 'photo', target: 'g-rename-photo', target_port: 'items' },
-    { id: 'g-e6', source: 'g-router', source_port: 'other', target: 'g-rename-other', target_port: 'items' },
-    { id: 'g-e7', source: 'g-router', source_port: 'mixed_leaf', target: 'g-mixed-router', target_port: 'items' },
-    { id: 'g-e8', source: 'g-mixed-router', source_port: 'video', target: 'g-rename-mixed-video', target_port: 'items' },
-    { id: 'g-e9', source: 'g-mixed-router', source_port: 'photo', target: 'g-rename-mixed-photo', target_port: 'items' },
-    { id: 'g-e10', source: 'g-rename-video', source_port: 'items', target: 'g-collect', target_port: 'items_1' },
-    { id: 'g-e11', source: 'g-rename-manga', source_port: 'items', target: 'g-collect', target_port: 'items_2' },
-    { id: 'g-e12', source: 'g-rename-photo', source_port: 'items', target: 'g-collect', target_port: 'items_3' },
-    { id: 'g-e13', source: 'g-rename-other', source_port: 'items', target: 'g-collect', target_port: 'items_4' },
-    { id: 'g-e14', source: 'g-rename-mixed-video', source_port: 'items', target: 'g-collect', target_port: 'items_5' },
-    { id: 'g-e15', source: 'g-rename-mixed-photo', source_port: 'items', target: 'g-collect', target_port: 'items_6' },
-    { id: 'g-e16', source: 'g-collect', source_port: 'items', target: 'g-move', target_port: 'items' },
-  ],
-})
+const TEMPLATE_CLASSIFICATION = '{"nodes":[{"id":"n-scanner","type":"folder-tree-scanner","label":"目录树扫描器","config":{"source_dir":""},"inputs":{"source_dir":{"link_source":{"source_node_id":"folder-picker-2","source_port":"path"}}},"ui_position":{"x":-250,"y":594},"enabled":true},{"id":"folder-picker-2","type":"folder-picker","label":"文件夹选择器","config":{"source_mode":"folders","paths":[],"saved_folder_ids":[],"folder_ids":[],"saved_folder_id":"5b656386-2c6d-41ff-86be-bf269397dc30","path":""},"inputs":{},"ui_position":{"x":-1011,"y":504},"enabled":true},{"id":"file-tree-classifier-4","type":"file-tree-classifier","label":"文件树分类器","config":{},"inputs":{"trees":{"link_source":{"source_node_id":"n-scanner","source_port":"tree"}}},"ui_position":{"x":754,"y":341},"enabled":true},{"id":"ext-ratio-classifier-6","type":"ext-ratio-classifier","label":"扩展名分类器","config":{},"inputs":{"trees":{"link_source":{"source_node_id":"n-scanner","source_port":"tree"}}},"ui_position":{"x":761,"y":758},"enabled":true},{"id":"name-keyword-classifier-7","type":"name-keyword-classifier","label":"关键词分类器","config":{},"inputs":{"trees":{"link_source":{"source_node_id":"n-scanner","source_port":"tree"}}},"ui_position":{"x":766,"y":1181},"enabled":true},{"id":"classification-writer-7","type":"classification-writer","label":"分类写入器","config":{},"inputs":{"entries":{"link_source":{"source_node_id":"signal-aggregator-8","source_port":"entries"}}},"ui_position":{"x":1890,"y":536},"enabled":true},{"id":"signal-aggregator-8","type":"signal-aggregator","label":"信号聚合器","config":{},"inputs":{"signal_ft":{"link_source":{"source_node_id":"file-tree-classifier-4","source_port":"signal"}},"signal_ext":{"link_source":{"source_node_id":"ext-ratio-classifier-6","source_port":"signal"}},"trees":{"link_source":{"source_node_id":"n-scanner","source_port":"tree"}},"signal_kw":{"link_source":{"source_node_id":"name-keyword-classifier-7","source_port":"signal"}}},"ui_position":{"x":1620,"y":915},"enabled":true},{"id":"classification-db-result-preview-8","type":"classification-db-result-preview","label":"分类落库结果预览","config":{},"inputs":{"entries":{"link_source":{"source_node_id":"classification-writer-7","source_port":"entries"}}},"ui_position":{"x":2276,"y":551},"enabled":true}],"edges":[{"id":"xy-edge__folder-picker-2out-1-n-scannerin-0","source":"folder-picker-2","source_port":"path","target":"n-scanner","target_port":"source_dir"},{"id":"xy-edge__n-scannerout-0-file-tree-classifier-4in-0","source":"n-scanner","source_port":"tree","target":"file-tree-classifier-4","target_port":"trees"},{"id":"xy-edge__n-scannerout-0-name-keyword-classifier-7in-0","source":"n-scanner","source_port":"tree","target":"name-keyword-classifier-7","target_port":"trees"},{"id":"xy-edge__n-scannerout-0-ext-ratio-classifier-6in-0","source":"n-scanner","source_port":"tree","target":"ext-ratio-classifier-6","target_port":"trees"},{"id":"xy-edge__file-tree-classifier-4out-0-signal-aggregator-8in-2","source":"file-tree-classifier-4","source_port":"signal","target":"signal-aggregator-8","target_port":"signal_ft"},{"id":"xy-edge__ext-ratio-classifier-6out-0-signal-aggregator-8in-3","source":"ext-ratio-classifier-6","source_port":"signal","target":"signal-aggregator-8","target_port":"signal_ext"},{"id":"xy-edge__n-scannerout-0-signal-aggregator-8in-0","source":"n-scanner","source_port":"tree","target":"signal-aggregator-8","target_port":"trees"},{"id":"xy-edge__name-keyword-classifier-7out-0-signal-aggregator-8in-1","source":"name-keyword-classifier-7","source_port":"signal","target":"signal-aggregator-8","target_port":"signal_kw"},{"id":"xy-edge__signal-aggregator-8out-0-classification-writer-7in-0","source":"signal-aggregator-8","source_port":"entries","target":"classification-writer-7","target_port":"entries"},{"id":"xy-edge__classification-writer-7out-0-classification-db-result-preview-8in-0","source":"classification-writer-7","source_port":"entries","target":"classification-db-result-preview-8","target_port":"entries"}]}'
 
 interface WorkflowTemplate {
   id: string
@@ -117,27 +34,21 @@ interface WorkflowTemplate {
 const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
   {
     id: 'blank',
-    name: '空白工作流',
+    name: '空白',
     description: '从零开始，自由搭建节点图',
     graphJson: '{"nodes":[],"edges":[]}',
   },
   {
-    id: 'classify-only',
-    name: '分类流',
-    description: '扫描源目录 → 三路并行分类 → 聚合写入数据库。适合只想给文件夹打类别标签的场景',
-    graphJson: TEMPLATE_CLASSIFICATION_ONLY,
+    id: 'processing',
+    name: '处理',
+    description: '使用 docs/通用处理流程.json 作为新建模板',
+    graphJson: TEMPLATE_PROCESSING,
   },
   {
-    id: 'classify-and-move',
-    name: '分类 + 路由移动',
-    description: '扫描 → 分类 → 预览结果 → 按类别移动到不同目标目录。完整管道，开箱即用',
-    graphJson: TEMPLATE_CLASSIFY_AND_MOVE,
-  },
-  {
-    id: 'generic-processing',
-    name: '通用处理流程',
-    description: '分类结果读取 → 拆分 → 类别路由（含 mixed 二次分流）→ 重命名 → 合并收集 → 统一移动。适合处理阶段的通用落地流程',
-    graphJson: TEMPLATE_GENERIC_PROCESSING,
+    id: 'classification',
+    name: '分类',
+    description: '使用 docs/通用分类流程.json 作为新建模板',
+    graphJson: TEMPLATE_CLASSIFICATION,
   },
 ]
 

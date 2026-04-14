@@ -199,7 +199,7 @@ func buildFolderLineageFlow(
 	mappings []*repository.FolderOutputMapping,
 	latestReview *repository.ProcessingReviewItem,
 ) (*FolderLineageFlow, int, int) {
-	sourceDirectoryPath := normalizeLineagePath(filepath.Dir(normalizeLineagePath(manifests[0].SourcePath)))
+	sourceDirectoryPath := deriveLineageSourceDirectoryPath(manifests)
 	if sourceDirectoryPath == "." {
 		sourceDirectoryPath = ""
 	}
@@ -393,6 +393,38 @@ func buildFolderLineageFlow(
 		TargetFiles:       targetFiles,
 		Links:             links,
 	}, exactMatchCount, len(links)
+}
+
+func deriveLineageSourceDirectoryPath(manifests []*repository.FolderSourceManifest) string {
+	for _, manifest := range manifests {
+		if manifest == nil {
+			continue
+		}
+
+		sourcePath := normalizeLineagePath(manifest.SourcePath)
+		relativePath := normalizeLineagePath(manifest.RelativePath)
+		if sourcePath == "" {
+			continue
+		}
+		if relativePath == "" || relativePath == "." {
+			return normalizeLineagePath(filepath.Dir(sourcePath))
+		}
+
+		normalizedSourceDir := normalizeLineagePath(filepath.Dir(sourcePath))
+		normalizedRelativeDir := normalizeLineagePath(filepath.Dir(relativePath))
+		if normalizedRelativeDir == "." || normalizedRelativeDir == "" {
+			return normalizedSourceDir
+		}
+
+		rootPath := strings.TrimSuffix(normalizedSourceDir, "/"+normalizedRelativeDir)
+		rootPath = strings.TrimSuffix(rootPath, "/")
+		if rootPath != "" && rootPath != normalizedSourceDir {
+			return normalizeLineagePath(rootPath)
+		}
+		return normalizedSourceDir
+	}
+
+	return ""
 }
 
 func (s *FolderLineageService) buildTimeline(

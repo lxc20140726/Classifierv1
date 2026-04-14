@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertCircle, ArrowLeft, Clock3, Link2 } from 'lucide-react'
+import { AlertCircle, ArrowLeft, Clock3, Link2, Sparkles } from 'lucide-react'
 import { Link, useParams } from 'react-router-dom'
 
 import { ApiRequestError } from '@/api/client'
@@ -60,6 +60,26 @@ function resolveArtifactTypeLabel(value?: string) {
   return ARTIFACT_TYPE_LABEL[key] ?? ''
 }
 
+function compactFileName(name: string) {
+  const trimmed = name.trim()
+  if (trimmed.length <= 18) return trimmed
+
+  const extensionIndex = trimmed.lastIndexOf('.')
+  const hasExtension = extensionIndex > 0 && extensionIndex < trimmed.length - 1
+  const extension = hasExtension ? trimmed.slice(extensionIndex) : ''
+  const base = hasExtension ? trimmed.slice(0, extensionIndex) : trimmed
+
+  if (base.length <= 12) return trimmed
+  return `${base.slice(0, 8)}…${base.slice(-4)}${extension}`
+}
+
+function getFileExtension(name: string) {
+  const trimmed = name.trim()
+  const extensionIndex = trimmed.lastIndexOf('.')
+  if (extensionIndex <= 0 || extensionIndex === trimmed.length - 1) return ''
+  return trimmed.slice(extensionIndex + 1).slice(0, 6).toUpperCase()
+}
+
 function buildLinkGeometries(
   flow: FolderLineageFlow,
   container: HTMLDivElement,
@@ -97,28 +117,75 @@ function buildLinkGeometries(
 function FileItem({
   file,
   isActive,
+  isMuted,
+  linkCount,
+  tone,
   onClick,
+  onMouseEnter,
+  onMouseLeave,
   refCallback,
 }: {
   file: FolderLineageSourceFile | FolderLineageFile
   isActive: boolean
+  isMuted: boolean
+  linkCount: number
+  tone: 'source' | 'target'
   onClick: () => void
+  onMouseEnter: () => void
+  onMouseLeave: () => void
   refCallback: (node: HTMLButtonElement | null) => void
 }) {
+  const extension = getFileExtension(file.name)
   return (
     <button
       ref={refCallback}
       type="button"
       onClick={onClick}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
       className={cn(
-        'w-full truncate border-2 px-3 py-2 text-left text-xs font-black transition-all',
+        'group flex h-10 w-full items-center gap-2 overflow-hidden border px-2.5 text-left text-[11px] font-black tracking-[0.01em] transition-all',
+        isMuted && !isActive && 'opacity-40',
         isActive
-          ? 'border-foreground bg-foreground text-background shadow-hard'
-          : 'border-foreground bg-background text-foreground hover:bg-muted/60',
+          ? tone === 'source'
+            ? 'border-blue-900 bg-blue-950 text-white shadow-hard -translate-y-0.5'
+            : 'border-emerald-900 bg-emerald-950 text-white shadow-hard -translate-y-0.5'
+          : 'border-foreground/20 bg-background/90 text-foreground hover:border-foreground/50 hover:bg-muted/50',
       )}
       title={file.path}
     >
-      {file.name}
+      <span
+        className={cn(
+          'inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[10px]',
+          isActive
+            ? 'border-white/40 bg-white/10 text-white'
+            : tone === 'source'
+              ? 'border-blue-900/20 bg-blue-100 text-blue-900'
+              : 'border-emerald-900/20 bg-emerald-100 text-emerald-900',
+        )}
+      >
+        {tone === 'source' ? '源' : '达'}
+      </span>
+      <span className="min-w-0 flex-1 truncate">{compactFileName(file.name)}</span>
+      {extension && (
+        <span
+          className={cn(
+            'shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] leading-none',
+            isActive ? 'border-white/30 bg-white/10 text-white/90' : 'border-foreground/15 bg-muted/40 text-muted-foreground',
+          )}
+        >
+          {extension}
+        </span>
+      )}
+      <span
+        className={cn(
+          'inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] leading-none',
+          isActive ? 'bg-white/10 text-white/90' : 'bg-foreground text-background',
+        )}
+      >
+        <Link2 className="h-3 w-3" />
+        {linkCount}
+      </span>
     </button>
   )
 }
@@ -127,6 +194,7 @@ export default function FolderLineagePage() {
   const { id } = useParams<{ id: string }>()
   const [data, setData] = useState<FolderLineageResponse | null>(null)
   const [selectedFile, setSelectedFile] = useState<SelectedFile>(null)
+  const [hoveredFile, setHoveredFile] = useState<SelectedFile>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [linkGeometries, setLinkGeometries] = useState<LinkGeometry[]>([])
@@ -143,6 +211,7 @@ export default function FolderLineagePage() {
         if (cancelled) return
         setError(null)
         setSelectedFile(null)
+        setHoveredFile(null)
         setData(resp)
       })
       .catch((err: unknown) => {
@@ -193,24 +262,42 @@ export default function FolderLineagePage() {
     return nextMap
   }, [targetFiles])
 
+  const sourceLinkCountByID = useMemo(() => {
+    const nextMap = new Map<string, number>()
+    for (const link of links) {
+      nextMap.set(link.source_file_id, (nextMap.get(link.source_file_id) ?? 0) + 1)
+    }
+    return nextMap
+  }, [links])
+
+  const targetLinkCountByID = useMemo(() => {
+    const nextMap = new Map<string, number>()
+    for (const link of links) {
+      nextMap.set(link.target_file_id, (nextMap.get(link.target_file_id) ?? 0) + 1)
+    }
+    return nextMap
+  }, [links])
+
+  const activeFile = hoveredFile ?? selectedFile
+
   const relatedLinkIDs = useMemo(() => {
     const ids = new Set<string>()
-    if (selectedFile == null) return ids
+    if (activeFile == null) return ids
     for (const link of links) {
-      if (selectedFile.kind === 'source' && link.source_file_id === selectedFile.id) {
+      if (activeFile.kind === 'source' && link.source_file_id === activeFile.id) {
         ids.add(link.id)
       }
-      if (selectedFile.kind === 'target' && link.target_file_id === selectedFile.id) {
+      if (activeFile.kind === 'target' && link.target_file_id === activeFile.id) {
         ids.add(link.id)
       }
     }
     return ids
-  }, [links, selectedFile])
+  }, [activeFile, links])
 
   const highlightedSourceIDs = useMemo(() => {
     const ids = new Set<string>()
-    if (selectedFile?.kind === 'source') {
-      ids.add(selectedFile.id)
+    if (activeFile?.kind === 'source') {
+      ids.add(activeFile.id)
     }
     for (const link of links) {
       if (relatedLinkIDs.has(link.id)) {
@@ -218,12 +305,12 @@ export default function FolderLineagePage() {
       }
     }
     return ids
-  }, [links, relatedLinkIDs, selectedFile])
+  }, [activeFile, links, relatedLinkIDs])
 
   const highlightedTargetIDs = useMemo(() => {
     const ids = new Set<string>()
-    if (selectedFile?.kind === 'target') {
-      ids.add(selectedFile.id)
+    if (activeFile?.kind === 'target') {
+      ids.add(activeFile.id)
     }
     for (const link of links) {
       if (relatedLinkIDs.has(link.id)) {
@@ -231,7 +318,7 @@ export default function FolderLineagePage() {
       }
     }
     return ids
-  }, [links, relatedLinkIDs, selectedFile])
+  }, [activeFile, links, relatedLinkIDs])
 
   const selectedDetails = useMemo(() => {
     if (selectedFile == null) return null
@@ -374,53 +461,102 @@ export default function FolderLineagePage() {
         </section>
       ) : (
         <section className="space-y-3 border-2 border-foreground bg-card p-3 shadow-hard">
-          <div className="mb-1 flex items-center justify-between">
-            <h2 className="text-sm font-black">目录分组文件流向图</h2>
-            <button
-              type="button"
-              onClick={() => setSelectedFile(null)}
-              className="text-xs font-bold text-muted-foreground underline-offset-4 hover:underline"
-            >
-              清除高亮
-            </button>
+          <div className="mb-1 flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-black">目录分组文件流向图</h2>
+              <p className="mt-1 text-[11px] font-bold text-muted-foreground">
+                将文件名压缩为紧凑标签，重点查看来源文件与目标目录之间的映射连线
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-[11px] font-black">
+              <span className="inline-flex items-center gap-1.5 border border-blue-900/20 bg-blue-100 px-2 py-1 text-blue-900">
+                <Sparkles className="h-3.5 w-3.5" />
+                源文件 {sourceFiles.length}
+              </span>
+              <span className="inline-flex items-center gap-1.5 border border-emerald-900/20 bg-emerald-100 px-2 py-1 text-emerald-900">
+                <Sparkles className="h-3.5 w-3.5" />
+                目标文件 {targetFiles.length}
+              </span>
+              <span className="inline-flex items-center gap-1.5 border border-foreground/20 bg-muted/40 px-2 py-1 text-foreground">
+                <Link2 className="h-3.5 w-3.5" />
+                映射 {links.length}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedFile(null)
+                  setHoveredFile(null)
+                }}
+                className="text-xs font-bold text-muted-foreground underline-offset-4 hover:underline"
+              >
+                清除高亮
+              </button>
+            </div>
           </div>
 
           <div className="max-h-[560px] overflow-auto border-2 border-foreground bg-background">
-            <div ref={flowCanvasRef} className="relative min-w-[980px] p-4">
+            <div ref={flowCanvasRef} className="relative min-w-[960px] bg-[linear-gradient(90deg,rgba(37,99,235,0.06)_0,rgba(37,99,235,0.06)_23%,transparent_36%,transparent_62%,rgba(5,150,105,0.06)_78%,rgba(5,150,105,0.06)_100%)] p-4">
               <svg className="pointer-events-none absolute inset-0 h-full w-full" aria-hidden="true">
                 <g>
                   {linkGeometries.map((geometry) => (
-                    <path
-                      key={geometry.id}
-                      d={geometry.d}
-                      fill="none"
-                      className={cn(
-                        'transition-all',
-                        relatedLinkIDs.size === 0
-                          ? 'stroke-muted-foreground/50 stroke-[1.5]'
-                          : relatedLinkIDs.has(geometry.id)
-                            ? 'stroke-blue-700 stroke-[2.5]'
-                            : 'stroke-muted-foreground/20 stroke-[1.2]',
-                      )}
-                    />
+                    <g key={geometry.id}>
+                      <path
+                        d={geometry.d}
+                        fill="none"
+                        strokeLinecap="round"
+                        className={cn(
+                          'transition-all duration-200',
+                          relatedLinkIDs.size === 0
+                            ? 'stroke-blue-200/60'
+                            : relatedLinkIDs.has(geometry.id)
+                              ? 'stroke-blue-300/70'
+                              : 'stroke-muted-foreground/10',
+                        )}
+                        strokeWidth={relatedLinkIDs.size === 0 ? 4 : relatedLinkIDs.has(geometry.id) ? 6 : 2}
+                      />
+                      <path
+                        d={geometry.d}
+                        fill="none"
+                        strokeLinecap="round"
+                        className={cn(
+                          'transition-all duration-200',
+                          relatedLinkIDs.size === 0
+                            ? 'stroke-muted-foreground/55'
+                            : relatedLinkIDs.has(geometry.id)
+                              ? 'stroke-blue-700'
+                              : 'stroke-muted-foreground/20',
+                        )}
+                        strokeWidth={relatedLinkIDs.size === 0 ? 1.5 : relatedLinkIDs.has(geometry.id) ? 2.5 : 1.2}
+                      />
+                    </g>
                   ))}
                 </g>
               </svg>
 
-              <div className="relative z-10 grid grid-cols-[320px_minmax(620px,1fr)] gap-6">
+              <div className="relative z-10 grid grid-cols-[280px_minmax(640px,1fr)] gap-5">
                 <div className="space-y-3">
-                  <div className="border-2 border-foreground bg-card p-3 shadow-hard">
-                    <p className="text-xs font-black text-muted-foreground">{formatDirectoryTitle(flow.source_directory, true)}</p>
+                  <div className="border border-blue-900/15 bg-white/90 p-3 shadow-hard backdrop-blur">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-xs font-black text-blue-900">{formatDirectoryTitle(flow.source_directory, true)}</p>
+                      <span className="border border-blue-900/20 bg-blue-100 px-1.5 py-0.5 text-[10px] font-black text-blue-900">
+                        {sourceFiles.length} 项
+                      </span>
+                    </div>
                     <p className="mt-1 break-all font-mono text-[11px] font-bold text-muted-foreground">{flow.source_directory.path || '—'}</p>
                   </div>
 
-                  <div className="space-y-2">
+                  <div className="space-y-1.5">
                     {sourceFiles.map((sourceFile) => (
                       <FileItem
                         key={sourceFile.id}
                         file={sourceFile}
                         isActive={highlightedSourceIDs.has(sourceFile.id)}
+                        isMuted={relatedLinkIDs.size > 0 && !highlightedSourceIDs.has(sourceFile.id)}
+                        linkCount={sourceLinkCountByID.get(sourceFile.id) ?? 0}
+                        tone="source"
                         onClick={() => setSelectedFile({ kind: 'source', id: sourceFile.id })}
+                        onMouseEnter={() => setHoveredFile({ kind: 'source', id: sourceFile.id })}
+                        onMouseLeave={() => setHoveredFile((current) => (current?.kind === 'source' && current.id === sourceFile.id ? null : current))}
                         refCallback={(node) => {
                           sourceFileRefs.current[sourceFile.id] = node
                         }}
@@ -434,21 +570,36 @@ export default function FolderLineagePage() {
                     const files = directory.id == null ? [] : (targetFilesByDirectoryID.get(directory.id) ?? [])
                     const artifactTypeLabel = resolveArtifactTypeLabel(directory.artifact_type)
                     return (
-                      <div key={directory.id ?? directory.path} className="space-y-2 border-2 border-foreground bg-card p-3 shadow-hard">
-                        <div>
-                          <p className="text-xs font-black text-muted-foreground">{formatDirectoryTitle(directory, false)}</p>
-                          <p className="mt-1 break-all font-mono text-[11px] font-bold text-muted-foreground">{directory.path || '—'}</p>
-                          {artifactTypeLabel && (
-                            <p className="mt-1 text-[11px] font-black text-muted-foreground">{artifactTypeLabel}</p>
-                          )}
+                      <div
+                        key={directory.id ?? directory.path}
+                        className="space-y-2 border border-emerald-900/15 bg-white/90 p-3 shadow-hard backdrop-blur"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-xs font-black text-emerald-900">{formatDirectoryTitle(directory, false)}</p>
+                            <p className="mt-1 break-all font-mono text-[11px] font-bold text-muted-foreground">{directory.path || '—'}</p>
+                          </div>
+                          <div className="shrink-0 space-y-1 text-right">
+                            <p className="border border-emerald-900/20 bg-emerald-100 px-1.5 py-0.5 text-[10px] font-black text-emerald-900">
+                              {files.length} 项
+                            </p>
+                            {artifactTypeLabel && (
+                              <p className="text-[10px] font-black text-muted-foreground">{artifactTypeLabel}</p>
+                            )}
+                          </div>
                         </div>
-                        <div className="space-y-2">
+                        <div className="space-y-1.5">
                           {files.map((targetFile) => (
                             <FileItem
                               key={targetFile.id}
                               file={targetFile}
                               isActive={highlightedTargetIDs.has(targetFile.id)}
+                              isMuted={relatedLinkIDs.size > 0 && !highlightedTargetIDs.has(targetFile.id)}
+                              linkCount={targetLinkCountByID.get(targetFile.id) ?? 0}
+                              tone="target"
                               onClick={() => setSelectedFile({ kind: 'target', id: targetFile.id })}
+                              onMouseEnter={() => setHoveredFile({ kind: 'target', id: targetFile.id })}
+                              onMouseLeave={() => setHoveredFile((current) => (current?.kind === 'target' && current.id === targetFile.id ? null : current))}
                               refCallback={(node) => {
                                 targetFileRefs.current[targetFile.id] = node
                               }}
@@ -460,29 +611,58 @@ export default function FolderLineagePage() {
                   })}
                 </div>
               </div>
+
+              {relatedLinkIDs.size > 0 && (
+                <div className="pointer-events-none absolute left-1/2 top-3 z-20 -translate-x-1/2">
+                  <div className="inline-flex items-center gap-2 border border-blue-900/20 bg-white/95 px-3 py-1.5 text-[11px] font-black text-blue-900 shadow-hard backdrop-blur">
+                    <Link2 className="h-3.5 w-3.5" />
+                    当前高亮 {relatedLinkIDs.size} 条映射关系
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
-          <div className="border-2 border-foreground bg-card p-3 shadow-hard">
-            <h3 className="mb-2 text-sm font-black">详情面板</h3>
-            {selectedDetails == null ? (
-              <p className="text-xs font-bold text-muted-foreground">点击任一文件条目查看完整路径和运行信息</p>
-            ) : (
-              <div className="space-y-1.5 text-xs font-bold">
-                <p className="inline-flex items-center gap-1 border-2 border-foreground bg-background px-2 py-1">
-                  <Link2 className="h-3.5 w-3.5" />
-                  {selectedDetails.title}
-                </p>
-                <p className="inline-flex w-fit items-center border border-foreground/40 bg-muted/30 px-2 py-0.5 text-[11px] font-black text-muted-foreground">
-                  当前路径
-                </p>
-                <p>完整路径：<span className="break-all font-mono">{selectedDetails.path || '—'}</span></p>
-                <p>目录：<span className="break-all font-mono">{selectedDetails.directory || '—'}</span></p>
-                <p>节点类型：{selectedDetails.nodeType || '—'}</p>
-                <p>Workflow Run：{selectedDetails.workflowRunID || '—'}</p>
-                <p>Job：{selectedDetails.jobID || '—'}</p>
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_300px]">
+            <div className="border-2 border-foreground bg-card p-3 shadow-hard">
+              <h3 className="mb-2 text-sm font-black">映射说明</h3>
+              <div className="flex flex-wrap items-center gap-2 text-[11px] font-bold text-muted-foreground">
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="h-2.5 w-8 rounded-full bg-blue-700" />
+                  选中或悬停后，仅强化相关映射
+                </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="h-2.5 w-8 rounded-full bg-muted-foreground/40" />
+                  未聚焦时保留整体网络感
+                </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="inline-flex h-5 items-center rounded-full border border-foreground/15 bg-muted/40 px-1.5 text-[10px] font-black">MP4</span>
+                  文件名已压缩显示，完整路径看右侧详情
+                </span>
               </div>
-            )}
+            </div>
+
+            <div className="border-2 border-foreground bg-card p-3 shadow-hard">
+              <h3 className="mb-2 text-sm font-black">详情面板</h3>
+              {selectedDetails == null ? (
+                <p className="text-xs font-bold text-muted-foreground">点击任一文件条目查看完整路径和运行信息</p>
+              ) : (
+                <div className="space-y-1.5 text-xs font-bold">
+                  <p className="inline-flex items-center gap-1 border-2 border-foreground bg-background px-2 py-1">
+                    <Link2 className="h-3.5 w-3.5" />
+                    {selectedDetails.title}
+                  </p>
+                  <p className="inline-flex w-fit items-center border border-foreground/40 bg-muted/30 px-2 py-0.5 text-[11px] font-black text-muted-foreground">
+                    当前路径
+                  </p>
+                  <p>完整路径：<span className="break-all font-mono">{selectedDetails.path || '—'}</span></p>
+                  <p>目录：<span className="break-all font-mono">{selectedDetails.directory || '—'}</span></p>
+                  <p>节点类型：{selectedDetails.nodeType || '—'}</p>
+                  <p>Workflow Run：{selectedDetails.workflowRunID || '—'}</p>
+                  <p>Job：{selectedDetails.jobID || '—'}</p>
+                </div>
+              )}
+            </div>
           </div>
         </section>
       )}

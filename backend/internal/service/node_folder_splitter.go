@@ -152,10 +152,16 @@ func folderSplitterCollectItems(entry ClassifiedEntry, rootPath string, depth in
 		*out = append(*out, folderSplitterBuildSelfItem(entry, rootPath))
 	}
 
-	for _, child := range entry.Subtree {
-		if !folderSplitterIsDirectChild(entry, child) {
-			continue
+	directChildren := folderSplitterDirectChildren(entry)
+	inheritRootFolderID := ""
+	if len(directChildren) == 1 {
+		child := directChildren[0]
+		if folderSplitterShouldInheritRootFolder(entry, child) {
+			inheritRootFolderID = strings.TrimSpace(entry.FolderID)
 		}
+	}
+
+	for _, child := range directChildren {
 		if keepMixedRoot && folderSplitterShouldAbsorbPromoChild(entry, child) {
 			continue
 		}
@@ -167,7 +173,54 @@ func folderSplitterCollectItems(entry ClassifiedEntry, rootPath string, depth in
 			folderSplitterCollectItems(child, rootPath, depth-1, splitWithSubdirs, out)
 			continue
 		}
-		*out = append(*out, folderSplitterBuildSelfItem(child, rootPath))
+		item := folderSplitterBuildSelfItem(child, rootPath)
+		if inheritRootFolderID != "" {
+			item.FolderID = inheritRootFolderID
+			item.FolderName = strings.TrimSpace(entry.Name)
+			item.TargetName = strings.TrimSpace(entry.Name)
+		}
+		*out = append(*out, item)
+	}
+}
+
+func folderSplitterDirectChildren(entry ClassifiedEntry) []ClassifiedEntry {
+	if len(entry.Subtree) == 0 {
+		return nil
+	}
+
+	direct := make([]ClassifiedEntry, 0, len(entry.Subtree))
+	for _, child := range entry.Subtree {
+		if !folderSplitterIsDirectChild(entry, child) {
+			continue
+		}
+		direct = append(direct, child)
+	}
+	return direct
+}
+
+func folderSplitterShouldInheritRootFolder(parent, child ClassifiedEntry) bool {
+	parentCategory := strings.ToLower(strings.TrimSpace(folderSplitterResolveEntryCategory(parent)))
+	childCategory := strings.ToLower(strings.TrimSpace(folderSplitterResolveEntryCategory(child)))
+	if parentCategory == "" || childCategory == "" || parentCategory != childCategory {
+		return false
+	}
+	if len(child.Subtree) > 0 {
+		return false
+	}
+	if folderSplitterHasRecognizedMediaFiles(parent.Files) {
+		return false
+	}
+
+	name := strings.ToLower(strings.TrimSpace(child.Name))
+	switch parentCategory {
+	case "video":
+		return name == "video" || name == "videos"
+	case "photo":
+		return name == "photo" || name == "photos" || name == "image" || name == "images" || name == "picture" || name == "pictures"
+	case "manga":
+		return name == "manga" || name == "mangas" || name == "comic" || name == "comics"
+	default:
+		return false
 	}
 }
 

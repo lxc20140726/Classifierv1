@@ -621,6 +621,61 @@ func TestFolderLineageServiceBuildsFlowFromOlderManifestBatchWhenLatestBatchDoes
 	}
 }
 
+func TestFolderLineageServiceBuildsFlowFromFolderRootWhenSourcesAreNestedInContainerDir(t *testing.T) {
+	t.Parallel()
+
+	manifests := []*repository.FolderSourceManifest{
+		{
+			ID:           "sm-1",
+			FolderID:     "f1",
+			BatchID:      "b1",
+			SourcePath:   "/scan/album-a/Videos/clip-01.mp4",
+			RelativePath: "Videos/clip-01.mp4",
+			FileName:     "clip-01.mp4",
+			SizeBytes:    100,
+		},
+	}
+
+	svc := newTestLineageService(
+		&repository.Folder{ID: "f1", Path: "/target/album-a", SourceDir: "/target", RelativePath: "album-a", Name: "album-a", Status: "done", Category: "video"},
+		[]*repository.FolderPathObservation{{ID: "o1", FolderID: "f1", Path: "/target/album-a", IsCurrent: true, FirstSeenAt: testLineageTime(2), LastSeenAt: testLineageTime(2)}},
+		nil,
+		nil,
+		nil,
+		manifests,
+		&stubLineageOutputMappingRepo{
+			latestWorkflowRunID: "wr-1",
+			byWorkflowRun: map[string][]*repository.FolderOutputMapping{
+				"wr-1": {{
+					ID:                 "m1",
+					WorkflowRunID:      "wr-1",
+					FolderID:           "f1",
+					SourcePath:         "/scan/album-a/Videos/clip-01.mp4",
+					SourceRelativePath: "Videos/clip-01.mp4",
+					OutputPath:         "/target/album-a/clip-01.mp4",
+					NodeType:           "move-node",
+					ArtifactType:       "primary",
+					CreatedAt:          testLineageTime(3),
+				}},
+			},
+		},
+	)
+
+	resp, err := svc.GetFolderLineage(context.Background(), "f1")
+	if err != nil {
+		t.Fatalf("GetFolderLineage() error = %v", err)
+	}
+	if resp.Flow == nil {
+		t.Fatalf("flow should not be nil")
+	}
+	if resp.Flow.SourceDirectory.Path != "/scan/album-a" {
+		t.Fatalf("flow.source_directory.path = %q, want /scan/album-a", resp.Flow.SourceDirectory.Path)
+	}
+	if len(resp.Flow.SourceFiles) != 1 || resp.Flow.SourceFiles[0].RelativePath != "Videos/clip-01.mp4" {
+		t.Fatalf("flow.source_files = %#v, want nested relative path preserved", resp.Flow.SourceFiles)
+	}
+}
+
 func TestFolderLineageServiceBuildsFlowWithWindowsDriveLetterCaseDifferences(t *testing.T) {
 	t.Parallel()
 

@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 LOCAL="$ROOT/.local"
 
-mkdir -p "$LOCAL/source" "$LOCAL/target" "$LOCAL/config" "$LOCAL/delete-staging"
+mkdir -p "$LOCAL"
 
 kill_port() {
   lsof -nP -iTCP:"$1" -sTCP:LISTEN 2>/dev/null | awk 'NR>1{print $2}' | xargs kill 2>/dev/null || true
