@@ -308,7 +308,7 @@
         "items": {
           "link_source": {
             "source_node_id": "compress-node-14",
-            "source_port": "items"
+            "source_port": "archive_items"
           }
         }
       },
@@ -414,7 +414,7 @@
     {
       "id": "xy-edge__compress-node-14out-0-move-node-15in-0",
       "source": "compress-node-14",
-      "source_port": "items",
+      "source_port": "archive_items",
       "target": "move-node-15",
       "target_port": "items"
     }

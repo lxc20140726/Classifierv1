@@ -43,7 +43,7 @@ for i in $(seq 1 20); do
 done
 
 echo "启动前端 (http://localhost:5173) ..."
-cd "$ROOT/frontend" && npm run dev > "$LOCAL/frontend.log" 2>&1 &
+cd "$ROOT/frontend" && npm run dev -- --host 127.0.0.1 --port 5173 > "$LOCAL/frontend.log" 2>&1 &
 FRONTEND_PID=$!
 cd "$ROOT"
 
