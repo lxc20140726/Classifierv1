@@ -87,3 +87,38 @@ test('graph JSON 非法：校验失败', () => {
   expect(check.canLaunch).toBeFalsy()
   expect(check.error).toBeTruthy()
 })
+
+test('更新工作流图失败：抛出后端异常并中断启动', async () => {
+  let started = false
+
+  await expect(
+    launchWorkflowForFolder({
+      workflowDef: { id: 'wf-3', graph_json: VALID_GRAPH_WITH_PICKER },
+      folderId: 'folder-123',
+      updateWorkflowGraph: async () => {
+        throw new Error('后端更新失败')
+      },
+      startWorkflow: async () => {
+        started = true
+        return 'job-1'
+      },
+      bindLatestLaunch: async () => undefined,
+    }),
+  ).rejects.toThrow('后端更新失败')
+
+  expect(started).toBeFalsy()
+})
+
+test('启动任务失败：抛出网络错误', async () => {
+  await expect(
+    launchWorkflowForFolder({
+      workflowDef: { id: 'wf-4', graph_json: VALID_GRAPH_WITH_PICKER },
+      folderId: 'folder-123',
+      updateWorkflowGraph: async () => undefined,
+      startWorkflow: async () => {
+        throw new Error('网络错误')
+      },
+      bindLatestLaunch: async () => undefined,
+    }),
+  ).rejects.toThrow('网络错误')
+})

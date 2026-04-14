@@ -1,10 +1,11 @@
 import { buildBaselineScenarios } from './baselineScenarios'
+import { buildComplexScenarios } from './complexScenarios'
 import { filterScenariosByTags, readTagFilterFromEnv } from '../framework/tagFilter'
 
 import type { E2EScenario } from '../framework/types'
 
 export function loadScenarios(): E2EScenario[] {
-  return buildBaselineScenarios()
+  return [...buildBaselineScenarios(), ...buildComplexScenarios()]
 }
 
 export function loadFilteredScenarios(): E2EScenario[] {

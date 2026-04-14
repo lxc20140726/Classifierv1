@@ -2,7 +2,7 @@ import { expect } from '@playwright/test'
 
 import type { APIRequestContext } from '@playwright/test'
 
-interface FolderDTO {
+export interface FolderDTO {
   id: string
   name: string
   category: string
@@ -10,7 +10,7 @@ interface FolderDTO {
   path: string
 }
 
-interface WorkflowDefDTO {
+export interface WorkflowDefDTO {
   id: string
   name: string
   description: string
@@ -19,24 +19,31 @@ interface WorkflowDefDTO {
   version: number
 }
 
-interface WorkflowRunDTO {
+export interface WorkflowRunDTO {
   id: string
   status: string
 }
 
-interface ProcessingReviewSummaryDTO {
+export interface ProcessingReviewSummaryDTO {
   pending: number
   approved: number
   rolled_back: number
   total: number
 }
 
-interface ProcessingReviewItemDTO {
+export interface ProcessingReviewItemDTO {
   id: string
   folderID: string
   status: string
   beforePath: string
   afterPath: string
+}
+
+export interface FolderLineageDTO {
+  timeline: unknown[]
+  flow: {
+    links: unknown[]
+  } | null
 }
 
 function str(value: unknown): string {
@@ -83,6 +90,20 @@ export async function listFolders(request: APIRequestContext): Promise<FolderDTO
       path: str(row.path ?? row.Path),
     }
   })
+}
+
+export async function getFolderDetail(request: APIRequestContext, folderID: string): Promise<FolderDTO> {
+  const response = await request.get(`/api/folders/${folderID}`)
+  expect(response.ok()).toBeTruthy()
+  const body = (await response.json()) as { data?: Record<string, unknown> }
+  const row = (body.data ?? {}) as Record<string, unknown>
+  return {
+    id: str(row.id ?? row.ID),
+    name: str(row.name ?? row.Name),
+    category: str(row.category ?? row.Category),
+    status: str(row.status ?? row.Status),
+    path: str(row.path ?? row.Path),
+  }
 }
 
 export async function listWorkflowDefs(request: APIRequestContext): Promise<WorkflowDefDTO[]> {
@@ -184,6 +205,20 @@ export async function listWorkflowRunsByJob(
   })
 }
 
+export async function getWorkflowRun(
+  request: APIRequestContext,
+  workflowRunID: string,
+): Promise<WorkflowRunDTO> {
+  const response = await request.get(`/api/workflow-runs/${workflowRunID}`)
+  expect(response.ok()).toBeTruthy()
+  const body = (await response.json()) as { data?: Record<string, unknown> }
+  const row = (body.data ?? {}) as Record<string, unknown>
+  return {
+    id: str(row.id ?? row.ID),
+    status: str(row.status ?? row.Status),
+  }
+}
+
 export async function waitForWorkflowRunStatus(
   request: APIRequestContext,
   jobID: string,
@@ -199,6 +234,24 @@ export async function waitForWorkflowRunStatus(
     }, { timeout: timeoutMs, message: `等待 workflow run 进入 ${expected}` })
     .toBe(expected)
   return workflowRunID
+}
+
+export async function waitForWorkflowRunStatusIn(
+  request: APIRequestContext,
+  jobID: string,
+  expectedStatuses: string[],
+  timeoutMs = 40000,
+): Promise<WorkflowRunDTO> {
+  let current: WorkflowRunDTO = { id: '', status: '' }
+  await expect
+    .poll(async () => {
+      const runs = await listWorkflowRunsByJob(request, jobID)
+      current = runs[0] ?? { id: '', status: '' }
+      return expectedStatuses.includes(current.status)
+    }, { timeout: timeoutMs, message: `等待 workflow run 进入状态：${expectedStatuses.join(', ')}` })
+    .toBeTruthy()
+  expect(current.id).not.toEqual('')
+  return current
 }
 
 export async function listReviewsSummary(
@@ -260,4 +313,27 @@ export async function waitForPendingReviews(request: APIRequestContext, workflow
       return summary.pending
     }, { timeout: timeoutMs, message: '等待处理流进入待确认状态' })
     .toBeGreaterThan(0)
+}
+
+export async function provideWorkflowInput(
+  request: APIRequestContext,
+  workflowRunID: string,
+  category: 'photo' | 'video' | 'manga' | 'mixed' | 'other',
+) {
+  const response = await request.post(`/api/workflow-runs/${workflowRunID}/provide-input`, {
+    data: { category },
+  })
+  expect(response.status()).toBe(204)
+}
+
+export async function getFolderLineage(request: APIRequestContext, folderID: string): Promise<FolderLineageDTO> {
+  const response = await request.get(`/api/folders/${folderID}/lineage`)
+  expect(response.ok()).toBeTruthy()
+  const body = (await response.json()) as Record<string, unknown>
+  const flowCandidate = body.flow as Record<string, unknown> | undefined
+  const linksCandidate = Array.isArray(flowCandidate?.links) ? flowCandidate.links : []
+  return {
+    timeline: Array.isArray(body.timeline) ? body.timeline : [],
+    flow: flowCandidate == null ? null : { links: linksCandidate },
+  }
 }

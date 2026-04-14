@@ -103,7 +103,10 @@ async function waitForHealth(baseURL: string, timeoutMs = 45000) {
 function createState(): ScenarioState {
   return {
     folderIDsByName: {},
+    folderIDsByPath: {},
     workflowDefIDsByName: {},
+    workflowRunStatusByID: {},
+    scenarioData: {},
     jobIDs: [],
     workflowRunIDs: [],
   }

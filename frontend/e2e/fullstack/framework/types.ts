@@ -42,7 +42,10 @@ export interface RuntimePaths {
 
 export interface ScenarioState {
   folderIDsByName: Record<string, string>
+  folderIDsByPath: Record<string, string>
   workflowDefIDsByName: Record<string, string>
+  workflowRunStatusByID: Record<string, string>
+  scenarioData: Record<string, string>
   jobIDs: string[]
   workflowRunIDs: string[]
 }
