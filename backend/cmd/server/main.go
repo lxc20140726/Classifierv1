@@ -80,6 +80,8 @@ func main() {
 	folderCompletionSvc := service.NewFolderCompletionService(folderRepo, outputCheckRepo)
 	lineageFolderRepo, ok := folderRepo.(interface {
 		GetByID(ctx context.Context, id string) (*repository.Folder, error)
+		ListByPathPrefix(ctx context.Context, prefix string) ([]*repository.Folder, error)
+		ListByRelativePath(ctx context.Context, relativePath string) ([]*repository.Folder, error)
 		ListPathObservationsByFolderID(ctx context.Context, folderID string) ([]*repository.FolderPathObservation, error)
 	})
 	if !ok {

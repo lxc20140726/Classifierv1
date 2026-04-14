@@ -439,6 +439,9 @@ func TestFolderRepositoryUpdatesAndDelete(t *testing.T) {
 	if got.Path != "/media/new-path" {
 		t.Fatalf("path = %q, want /media/new-path", got.Path)
 	}
+	if got.Name != "new-path" {
+		t.Fatalf("name = %q, want new-path", got.Name)
+	}
 
 	if got.CoverImagePath != "/covers/new-path.jpg" {
 		t.Fatalf("cover_image_path = %q, want /covers/new-path.jpg", got.CoverImagePath)
@@ -513,6 +516,24 @@ func TestFolderRepositoryPathObservationsAndHistory(t *testing.T) {
 	}
 	if current.ID != folder.ID {
 		t.Fatalf("GetCurrentByPath(new).ID = %q, want %q", current.ID, folder.ID)
+	}
+	if current.Name != "original" {
+		t.Fatalf("GetCurrentByPath(new).Name = %q, want original", current.Name)
+	}
+
+	relativeReader, ok := repo.(interface {
+		ListByRelativePath(ctx context.Context, relativePath string) ([]*Folder, error)
+	})
+	if !ok {
+		t.Fatalf("folder repository does not expose ListByRelativePath")
+	}
+
+	byRelativePath, err := relativeReader.ListByRelativePath(ctx, "original")
+	if err != nil {
+		t.Fatalf("ListByRelativePath() error = %v", err)
+	}
+	if len(byRelativePath) != 1 || byRelativePath[0].ID != folder.ID {
+		t.Fatalf("ListByRelativePath() = %#v, want only %q", byRelativePath, folder.ID)
 	}
 
 	historical, err := repo.GetByHistoricalPath(ctx, "/media/original")

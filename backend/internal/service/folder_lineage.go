@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -30,6 +29,8 @@ const (
 
 type folderLineageFolderReader interface {
 	GetByID(ctx context.Context, id string) (*repository.Folder, error)
+	ListByPathPrefix(ctx context.Context, prefix string) ([]*repository.Folder, error)
+	ListByRelativePath(ctx context.Context, relativePath string) ([]*repository.Folder, error)
 	ListPathObservationsByFolderID(ctx context.Context, folderID string) ([]*repository.FolderPathObservation, error)
 }
 
@@ -53,6 +54,7 @@ type folderLineageOutputMappingReader interface {
 type folderLineageSourceManifestReader interface {
 	ListLatestByFolderID(ctx context.Context, folderID string) ([]*repository.FolderSourceManifest, error)
 	ListByFolderID(ctx context.Context, folderID string) ([]*repository.FolderSourceManifest, error)
+	ListByWorkflowRunAndFolderID(ctx context.Context, workflowRunID, folderID string) ([]*repository.FolderSourceManifest, error)
 }
 
 type FolderLineageService struct {
@@ -246,45 +248,45 @@ func (s *FolderLineageService) GetFolderLineage(ctx context.Context, folderID st
 		return nil, fmt.Errorf("folderLineage.GetFolderLineage get folder %q: %w", folderID, err)
 	}
 
-	observations, err := s.folders.ListPathObservationsByFolderID(ctx, folderID)
+	relatedFolders, err := s.resolveRelatedFolders(ctx, folder)
 	if err != nil {
-		return nil, fmt.Errorf("folderLineage.GetFolderLineage list observations for folder %q: %w", folderID, err)
+		return nil, err
 	}
 
-	snapshots := []*repository.Snapshot{}
-	if s.snapshots != nil {
-		items, listErr := s.snapshots.ListByFolderID(ctx, folderID)
-		if listErr != nil {
-			return nil, fmt.Errorf("folderLineage.GetFolderLineage list snapshots for folder %q: %w", folderID, listErr)
-		}
-		snapshots = items
+	observationsByFolderID, err := s.collectObservationsByFolderID(ctx, relatedFolders)
+	if err != nil {
+		return nil, err
 	}
 
-	var latestReview *repository.ProcessingReviewItem
-	if s.reviews != nil {
-		item, reviewErr := s.reviews.GetLatestByFolderID(ctx, folderID)
-		if reviewErr != nil && !errors.Is(reviewErr, repository.ErrNotFound) {
-			return nil, fmt.Errorf("folderLineage.GetFolderLineage get latest review for folder %q: %w", folderID, reviewErr)
-		}
-		if reviewErr == nil {
-			latestReview = item
-		}
+	observations := flattenFolderPathObservations(observationsByFolderID)
+	baseObservations := observationsByFolderID[strings.TrimSpace(folder.ID)]
+
+	snapshots, err := s.collectSnapshotsForFolders(ctx, relatedFolders)
+	if err != nil {
+		return nil, err
 	}
 
+	reviewsByFolderID, err := s.collectLatestReviewsByFolderID(ctx, relatedFolders)
+	if err != nil {
+		return nil, err
+	}
+	latestReview := selectLatestFolderReview(reviewsByFolderID)
 	reviewPayload := buildFolderLineageReview(latestReview)
 	currentPath := normalizeLineagePath(folder.Path)
 	pathAccByPath := buildPathAccumulators(observations, currentPath)
 
 	transitions := buildSnapshotTransitions(snapshots)
-	transitions = append(transitions, buildReviewTransitions(reviewPayload, transitions)...)
+	for _, item := range orderedFolderReviews(reviewsByFolderID) {
+		transitions = append(transitions, buildReviewTransitions(buildFolderLineageReview(item), transitions)...)
+	}
 	if len(transitions) == 0 {
 		transitions = buildObservationFallbackTransitions(pathAccByPath)
 	}
 
 	associatePathMetadata(pathAccByPath, transitions)
-	originalPath := resolveOriginalPath(pathAccByPath, observations, transitions, currentPath)
+	originalPath := resolveOriginalPath(pathAccByPath, baseObservations, transitions, currentPath)
 
-	artifacts, err := s.buildArtifacts(ctx, folderID, latestReview, reviewPayload)
+	artifacts, err := s.buildArtifactsForFolders(ctx, relatedFolders, reviewsByFolderID)
 	if err != nil {
 		return nil, err
 	}
@@ -292,13 +294,13 @@ func (s *FolderLineageService) GetFolderLineage(ctx context.Context, folderID st
 	nodes, pathNodeIDByPath, artifactNodeIDByPath := buildFolderLineageNodes(pathAccByPath, originalPath, currentPath, artifacts)
 	edges := buildFolderLineageEdges(transitions, artifacts, pathNodeIDByPath, artifactNodeIDByPath, currentPath)
 
-	timeline, err := s.buildTimeline(ctx, folderID, observations, transitions, artifacts)
+	timeline, err := s.buildTimeline(ctx, relatedFolderIDs(relatedFolders), baseObservations, transitions, artifacts)
 	if err != nil {
 		return nil, err
 	}
 
 	lastProcessedAt := resolveLastProcessedAt(latestReview, transitions, artifacts)
-	flow, err := s.buildFlow(ctx, folderID, latestReview)
+	flow, err := s.buildFlowForFolders(ctx, relatedFolders, reviewsByFolderID)
 	if err != nil {
 		return nil, err
 	}

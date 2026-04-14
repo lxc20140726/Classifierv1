@@ -261,6 +261,16 @@ function buildSnapshotEvent(snapshot: Snapshot): TimelineEvent {
   }
 }
 
+function isPathRevertibleSnapshot(snapshot: Snapshot): boolean {
+  const operation = snapshot.operation_type.trim().toLowerCase()
+  if (operation !== 'move' && operation !== 'rename') {
+    return false
+  }
+
+  const states = snapshot.after ?? snapshot.before
+  return states.some((state) => state.original_path.trim() !== '' && state.current_path.trim() !== '')
+}
+
 function buildAuditEvent(audit: AuditLog): TimelineEvent | null {
   const action = audit.action.trim().toLowerCase()
   const result = normalizeResult(audit.result)
@@ -670,7 +680,7 @@ export function SnapshotDrawer({ open, folderId, onClose }: SnapshotDrawerProps)
                           )}
                         </div>
 
-                        {item.snapshot?.status === 'committed' && (
+                        {item.snapshot?.status === 'committed' && isPathRevertibleSnapshot(item.snapshot) && (
                           <button
                             type="button"
                             disabled={state.revertingId !== null}

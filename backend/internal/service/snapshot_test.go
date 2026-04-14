@@ -220,6 +220,119 @@ func TestSnapshotServiceRevertMovesPathBackUpdatesFolderAndMarksReverted(t *test
 	}
 }
 
+func TestSnapshotServiceRevertSupportsLegacySingleObjectPathState(t *testing.T) {
+	t.Parallel()
+
+	database := newServiceTestDB(t)
+	folderRepo := repository.NewFolderRepository(database)
+	snapshotRepo := repository.NewSnapshotRepository(database)
+	adapter := fs.NewMockAdapter()
+	svc := NewSnapshotService(adapter, snapshotRepo, folderRepo)
+
+	folder := &repository.Folder{
+		ID:             "folder-revert-legacy",
+		Path:           "/library/revert-legacy-original",
+		Name:           "revert-legacy",
+		Category:       "other",
+		CategorySource: "auto",
+		Status:         "pending",
+		ScannedAt:      time.Now().UTC(),
+		UpdatedAt:      time.Now().UTC(),
+	}
+	if err := folderRepo.Upsert(context.Background(), folder); err != nil {
+		t.Fatalf("Upsert() error = %v", err)
+	}
+
+	snapshotID := "snapshot-revert-legacy"
+	if err := snapshotRepo.Create(context.Background(), &repository.Snapshot{
+		ID:            snapshotID,
+		JobID:         "job-revert-legacy",
+		FolderID:      folder.ID,
+		OperationType: "move",
+		Before:        json.RawMessage(`{"original_path":"/library/revert-legacy-original","current_path":"/library/revert-legacy-current"}`),
+		After:         json.RawMessage(`{"original_path":"/library/revert-legacy-original","current_path":"/library/revert-legacy-current"}`),
+		Status:        "committed",
+	}); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	if err := folderRepo.UpdatePath(context.Background(), folder.ID, "/library/revert-legacy-current", "/library", "revert-legacy-current"); err != nil {
+		t.Fatalf("UpdatePath() error = %v", err)
+	}
+
+	adapter.AddDir("/library/revert-legacy-current", []fs.DirEntry{{Name: "file.jpg", IsDir: false, Size: 10}})
+
+	result, err := svc.Revert(context.Background(), snapshotID)
+	if err != nil {
+		t.Fatalf("Revert() error = %v", err)
+	}
+
+	if !result.OK {
+		t.Fatalf("result.OK = false, want true")
+	}
+
+	if len(result.CurrentState) != 1 {
+		t.Fatalf("len(result.CurrentState) = %d, want 1", len(result.CurrentState))
+	}
+
+	if result.CurrentState[0].OriginalPath != "/library/revert-legacy-original" || result.CurrentState[0].CurrentPath != "/library/revert-legacy-current" {
+		t.Fatalf("result.CurrentState[0] = %+v", result.CurrentState[0])
+	}
+}
+
+func TestSnapshotServiceRevertUnsupportedSnapshotTypeReturnsResult(t *testing.T) {
+	t.Parallel()
+
+	database := newServiceTestDB(t)
+	folderRepo := repository.NewFolderRepository(database)
+	snapshotRepo := repository.NewSnapshotRepository(database)
+	svc := NewSnapshotService(fs.NewMockAdapter(), snapshotRepo, folderRepo)
+
+	folder := &repository.Folder{
+		ID:             "folder-revert-classify",
+		Path:           "/library/revert-classify",
+		Name:           "revert-classify",
+		Category:       "other",
+		CategorySource: "auto",
+		Status:         "pending",
+		ScannedAt:      time.Now().UTC(),
+		UpdatedAt:      time.Now().UTC(),
+	}
+	if err := folderRepo.Upsert(context.Background(), folder); err != nil {
+		t.Fatalf("Upsert() error = %v", err)
+	}
+
+	snapshotID := "snapshot-revert-classify"
+	if err := snapshotRepo.Create(context.Background(), &repository.Snapshot{
+		ID:            snapshotID,
+		JobID:         "job-revert-classify",
+		FolderID:      folder.ID,
+		OperationType: "classify",
+		Before:        json.RawMessage(`{"category":"other","category_source":"auto"}`),
+		After:         json.RawMessage(`{"category":"photo","category_source":"workflow"}`),
+		Status:        "committed",
+	}); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	result, err := svc.Revert(context.Background(), snapshotID)
+	if err == nil {
+		t.Fatalf("Revert() error = nil, want non-nil")
+	}
+
+	if result == nil {
+		t.Fatalf("Revert() result = nil, want non-nil")
+	}
+
+	if result.OK {
+		t.Fatalf("result.OK = true, want false")
+	}
+
+	if result.ErrorMessage == "" {
+		t.Fatalf("result.ErrorMessage = empty, want non-empty")
+	}
+}
+
 func TestSnapshotServiceRevertAlreadyRevertedReturnsError(t *testing.T) {
 	t.Parallel()
 

@@ -2027,11 +2027,18 @@ func (s *WorkflowRunnerService) syncFolderStatusesByWorkflowRun(ctx context.Cont
 		return nil
 	}
 
-	if strings.TrimSpace(runStatus) == "succeeded" && s.outputPipelineReady() {
-		if err := s.runOutputValidationChainForWorkflowRun(ctx, workflowRunID); err != nil {
-			return fmt.Errorf("run output validation chain for workflow run %q: %w", workflowRunID, err)
+	if s.outputPipelineReady() {
+		switch strings.TrimSpace(runStatus) {
+		case "succeeded":
+			if err := s.runOutputValidationChainForWorkflowRun(ctx, workflowRunID); err != nil {
+				return fmt.Errorf("run output validation chain for workflow run %q: %w", workflowRunID, err)
+			}
+			return nil
+		case "partial":
+			if err := s.buildOutputMappingsForWorkflowRun(ctx, workflowRunID); err != nil {
+				return fmt.Errorf("build output mappings for workflow run %q: %w", workflowRunID, err)
+			}
 		}
-		return nil
 	}
 
 	targetStatus, shouldSync := workflowRunStatusToFolderStatus(runStatus)
@@ -2065,11 +2072,8 @@ func (s *WorkflowRunnerService) runOutputValidationChainForWorkflowRun(ctx conte
 	if !s.outputPipelineReady() {
 		return nil
 	}
-	if err := s.freezeWorkflowRunSourceManifests(ctx, workflowRunID); err != nil {
-		return fmt.Errorf("freeze workflow run source manifests: %w", err)
-	}
-	if err := s.mappingSvc.Build(ctx, workflowRunID); err != nil {
-		return fmt.Errorf("build output mappings: %w", err)
+	if err := s.buildOutputMappingsForWorkflowRun(ctx, workflowRunID); err != nil {
+		return err
 	}
 	checks, err := s.validatorSvc.ValidateWorkflowRun(ctx, workflowRunID)
 	if err != nil {
@@ -2082,6 +2086,17 @@ func (s *WorkflowRunnerService) runOutputValidationChainForWorkflowRun(ctx conte
 		if err := s.completionSvc.Sync(ctx, check.FolderID, check); err != nil {
 			return fmt.Errorf("sync completion for folder %q: %w", check.FolderID, err)
 		}
+	}
+
+	return nil
+}
+
+func (s *WorkflowRunnerService) buildOutputMappingsForWorkflowRun(ctx context.Context, workflowRunID string) error {
+	if err := s.freezeWorkflowRunSourceManifests(ctx, workflowRunID); err != nil {
+		return fmt.Errorf("freeze workflow run source manifests: %w", err)
+	}
+	if err := s.mappingSvc.Build(ctx, workflowRunID); err != nil {
+		return fmt.Errorf("build output mappings: %w", err)
 	}
 
 	return nil

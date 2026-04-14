@@ -718,6 +718,158 @@ func TestFolderHandler(t *testing.T) {
 	})
 }
 
+func TestFolderHandlerListTopLevelAggregatesWorkflowOutputsIntoSourceFolder(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	database := newHandlerTestDB(t)
+	repo := repository.NewFolderRepository(database)
+	workflowRunRepo := repository.NewWorkflowRunRepository(database)
+	nodeRunRepo := repository.NewNodeRunRepository(database)
+	configRepo := repository.NewConfigRepository(database)
+	scheduledRepo := repository.NewScheduledWorkflowRepository(database)
+	router := setupRouter(repo, configRepo, scheduledRepo, nil, fs.NewMockAdapter())
+
+	ctx := context.Background()
+
+	seedFolder(t, repo, &repository.Folder{
+		ID:             "agg-root",
+		Path:           "/source/album",
+		SourceDir:      "/source",
+		RelativePath:   "album",
+		Name:           "album",
+		Category:       "mixed",
+		CategorySource: "auto",
+		Status:         "pending",
+	})
+	seedFolder(t, repo, &repository.Folder{
+		ID:             "agg-video",
+		Path:           "/source/album/Videos",
+		SourceDir:      "/source",
+		RelativePath:   "album",
+		Name:           "Videos",
+		Category:       "video",
+		CategorySource: "workflow",
+		Status:         "done",
+	})
+	if err := repo.UpdatePath(ctx, "agg-video", "/target/video/album", "/target/video", "album"); err != nil {
+		t.Fatalf("UpdatePath(agg-video) error = %v", err)
+	}
+
+	seedFolder(t, repo, &repository.Folder{
+		ID:             "agg-unrelated",
+		Path:           "/other-source/album",
+		SourceDir:      "/other-source",
+		RelativePath:   "album",
+		Name:           "album",
+		Category:       "video",
+		CategorySource: "workflow",
+		Status:         "done",
+	})
+	if err := repo.UpdatePath(ctx, "agg-unrelated", "/target/other/album", "/target/other", "album"); err != nil {
+		t.Fatalf("UpdatePath(agg-unrelated) error = %v", err)
+	}
+
+	for _, run := range []*repository.WorkflowRun{
+		{
+			ID:            "wr-agg-video",
+			JobID:         "job-agg-video",
+			FolderID:      "agg-video",
+			WorkflowDefID: "def-processing",
+			Status:        "succeeded",
+		},
+		{
+			ID:            "wr-agg-unrelated",
+			JobID:         "job-agg-unrelated",
+			FolderID:      "agg-unrelated",
+			WorkflowDefID: "def-processing",
+			Status:        "failed",
+		},
+	} {
+		if err := workflowRunRepo.Create(ctx, run); err != nil {
+			t.Fatalf("workflowRunRepo.Create(%s) error = %v", run.ID, err)
+		}
+	}
+
+	for _, run := range []*repository.NodeRun{
+		{
+			ID:            "nr-agg-video-move",
+			WorkflowRunID: "wr-agg-video",
+			NodeID:        "move",
+			NodeType:      "move-node",
+			Sequence:      1,
+			Status:        "succeeded",
+		},
+		{
+			ID:            "nr-agg-unrelated-move",
+			WorkflowRunID: "wr-agg-unrelated",
+			NodeID:        "move",
+			NodeType:      "move-node",
+			Sequence:      1,
+			Status:        "failed",
+		},
+	} {
+		if err := nodeRunRepo.Create(ctx, run); err != nil {
+			t.Fatalf("nodeRunRepo.Create(%s) error = %v", run.ID, err)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/folders?top_level_only=true&page=1&limit=10", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body = %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var payload struct {
+		Data  []repository.Folder `json:"data"`
+		Total int                 `json:"total"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+
+	if payload.Total != 2 {
+		t.Fatalf("total = %d, want 2", payload.Total)
+	}
+	if len(payload.Data) != 2 {
+		t.Fatalf("len(data) = %d, want 2", len(payload.Data))
+	}
+
+	foundRoot := false
+	foundMovedChild := false
+	foundUnrelated := false
+	for _, folder := range payload.Data {
+		switch folder.ID {
+		case "agg-root":
+			foundRoot = true
+			if folder.Name != "album" {
+				t.Fatalf("agg-root name = %q, want album", folder.Name)
+			}
+			if folder.WorkflowSummary.Processing.Status != "succeeded" {
+				t.Fatalf("agg-root processing status = %q, want succeeded", folder.WorkflowSummary.Processing.Status)
+			}
+		case "agg-video":
+			foundMovedChild = true
+		case "agg-unrelated":
+			foundUnrelated = true
+			if folder.WorkflowSummary.Processing.Status != "failed" {
+				t.Fatalf("agg-unrelated processing status = %q, want failed", folder.WorkflowSummary.Processing.Status)
+			}
+		}
+	}
+
+	if !foundRoot {
+		t.Fatalf("expected aggregated source folder agg-root in response")
+	}
+	if foundMovedChild {
+		t.Fatalf("moved workflow folder agg-video should be hidden after aggregation")
+	}
+	if !foundUnrelated {
+		t.Fatalf("unrelated same-name workflow folder should remain visible")
+	}
+}
+
 func TestFolderHandlerUpdateStatusDoneRequiresPassedOutputCheck(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

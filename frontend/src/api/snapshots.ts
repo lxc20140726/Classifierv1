@@ -39,17 +39,32 @@ function parseRecord(raw: RawSnapshotRecord) {
   }
 }
 
+function parseRecordObject(raw: unknown): { original_path: string; current_path: string } | null {
+  if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) {
+    return null
+  }
+
+  const record = parseRecord(raw as RawSnapshotRecord)
+  if (record.original_path === '' && record.current_path === '') {
+    return null
+  }
+
+  return record
+}
+
 function parseRecordArray(raw: unknown): Array<{ original_path: string; current_path: string }> {
   if (!Array.isArray(raw)) {
-    return []
+    const singleRecord = parseRecordObject(raw)
+    return singleRecord == null ? [] : [singleRecord]
   }
 
   const records: Array<{ original_path: string; current_path: string }> = []
   for (const item of raw) {
-    if (item == null || typeof item !== 'object') {
+    const record = parseRecordObject(item)
+    if (record == null) {
       continue
     }
-    records.push(parseRecord(item as RawSnapshotRecord))
+    records.push(record)
   }
 
   return records

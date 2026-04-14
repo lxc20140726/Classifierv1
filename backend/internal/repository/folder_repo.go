@@ -635,6 +635,40 @@ ORDER BY LENGTH(path) ASC, path ASC`, folderSelectColumns),
 	return folders, nil
 }
 
+func (r *SQLiteFolderRepository) ListByRelativePath(ctx context.Context, relativePath string) ([]*Folder, error) {
+	trimmedRelativePath := strings.TrimSpace(relativePath)
+	if trimmedRelativePath == "" {
+		return []*Folder{}, nil
+	}
+
+	rows, err := r.db.QueryContext(
+		ctx,
+		fmt.Sprintf(`SELECT %s
+FROM folders
+WHERE deleted_at IS NULL AND relative_path = ?
+ORDER BY updated_at DESC, scanned_at DESC, id ASC`, folderSelectColumns),
+		trimmedRelativePath,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("folderRepo.ListByRelativePath query: %w", err)
+	}
+	defer rows.Close()
+
+	folders := make([]*Folder, 0)
+	for rows.Next() {
+		folder, scanErr := scanFolder(rows)
+		if scanErr != nil {
+			return nil, fmt.Errorf("folderRepo.ListByRelativePath scan: %w", scanErr)
+		}
+		folders = append(folders, folder)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("folderRepo.ListByRelativePath rows: %w", err)
+	}
+
+	return folders, nil
+}
+
 func (r *SQLiteFolderRepository) UpdateCategory(ctx context.Context, id, category, source string) error {
 	res, err := r.db.ExecContext(
 		ctx,
@@ -679,12 +713,14 @@ func (r *SQLiteFolderRepository) UpdatePath(ctx context.Context, id, newPath, so
 	}
 	defer rollbackTx(tx)
 
+	name := deriveFolderNameFromPath(newPath)
 	res, err := tx.ExecContext(
 		ctx,
-		"UPDATE folders SET path = ?, source_dir = ?, relative_path = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+		"UPDATE folders SET path = ?, source_dir = ?, relative_path = ?, name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
 		newPath,
 		sourceDir,
 		relativePath,
+		name,
 		id,
 	)
 	if err != nil {
@@ -1091,6 +1127,26 @@ func assertRowsAffected(res sql.Result) error {
 	}
 
 	return nil
+}
+
+func deriveFolderNameFromPath(path string) string {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return ""
+	}
+
+	normalized := strings.ReplaceAll(trimmed, `\`, "/")
+	normalized = strings.TrimRight(normalized, "/")
+	if normalized == "" {
+		return ""
+	}
+
+	lastSlash := strings.LastIndex(normalized, "/")
+	if lastSlash < 0 {
+		return normalized
+	}
+
+	return normalized[lastSlash+1:]
 }
 
 func rollbackTx(tx *sql.Tx) {

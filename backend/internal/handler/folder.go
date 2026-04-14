@@ -41,6 +41,10 @@ type FolderSourceManifestReader interface {
 	ListLatestByFolderID(ctx context.Context, folderID string) ([]*repository.FolderSourceManifest, error)
 }
 
+type folderObservationReader interface {
+	ListPathObservationsByFolderID(ctx context.Context, folderID string) ([]*repository.FolderPathObservation, error)
+}
+
 type FolderHandler struct {
 	folders          repository.FolderRepository
 	config           repository.ConfigRepository
@@ -112,12 +116,23 @@ func (h *FolderHandler) List(c *gin.Context) {
 		SortOrder:      c.Query("sort_order"),
 	}
 
-	items, total, err := h.folders.List(c.Request.Context(), filter)
+	var (
+		items []*repository.Folder
+		total int
+		err   error
+	)
+	if filter.TopLevelOnly {
+		items, total, err = h.listTopLevelFolders(c.Request.Context(), filter)
+	} else {
+		items, total, err = h.folders.List(c.Request.Context(), filter)
+		if err == nil {
+			h.attachWorkflowSummaries(c.Request.Context(), items)
+		}
+	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list folders"})
 		return
 	}
-	h.attachWorkflowSummaries(c.Request.Context(), items)
 
 	c.JSON(http.StatusOK, gin.H{
 		"data":  items,
@@ -469,4 +484,293 @@ func (h *FolderHandler) attachWorkflowSummaries(ctx context.Context, folders []*
 		}
 		folder.WorkflowSummary = summary
 	}
+}
+
+func (h *FolderHandler) listTopLevelFolders(ctx context.Context, filter repository.FolderListFilter) ([]*repository.Folder, int, error) {
+	countFilter := filter
+	countFilter.Page = 1
+	countFilter.Limit = 1
+
+	_, rawTotal, err := h.folders.List(ctx, countFilter)
+	if err != nil {
+		return nil, 0, err
+	}
+	if rawTotal == 0 {
+		return []*repository.Folder{}, 0, nil
+	}
+
+	allFilter := filter
+	allFilter.Page = 1
+	allFilter.Limit = rawTotal
+
+	items, _, err := h.folders.List(ctx, allFilter)
+	if err != nil {
+		return nil, 0, err
+	}
+	h.attachWorkflowSummaries(ctx, items)
+
+	aggregated, err := h.aggregateTopLevelFolders(ctx, items)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	offset := (filter.Page - 1) * filter.Limit
+	if offset >= len(aggregated) {
+		return []*repository.Folder{}, len(aggregated), nil
+	}
+
+	end := offset + filter.Limit
+	if end > len(aggregated) {
+		end = len(aggregated)
+	}
+
+	return aggregated[offset:end], len(aggregated), nil
+}
+
+func (h *FolderHandler) aggregateTopLevelFolders(ctx context.Context, items []*repository.Folder) ([]*repository.Folder, error) {
+	observationReader, ok := h.folders.(folderObservationReader)
+	if !ok || len(items) == 0 {
+		return items, nil
+	}
+
+	grouped := make(map[string][]*repository.Folder, len(items))
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		key := normalizeFolderAggregateKey(item.RelativePath)
+		if key == "" {
+			key = "folder:" + strings.TrimSpace(item.ID)
+		}
+		grouped[key] = append(grouped[key], item)
+	}
+
+	type aggregatePlan struct {
+		merged    *repository.Folder
+		memberIDs map[string]struct{}
+	}
+
+	plans := make(map[string]aggregatePlan, len(grouped))
+	for key, group := range grouped {
+		base := selectTopLevelAggregateBase(group)
+		if base == nil {
+			continue
+		}
+
+		matchedWorkflowFolders := make([]*repository.Folder, 0, len(group))
+		memberIDs := map[string]struct{}{
+			strings.TrimSpace(base.ID): {},
+		}
+		for _, item := range group {
+			if item == nil || strings.TrimSpace(item.ID) == strings.TrimSpace(base.ID) {
+				continue
+			}
+			if !strings.EqualFold(strings.TrimSpace(item.CategorySource), "workflow") {
+				continue
+			}
+			observations, err := observationReader.ListPathObservationsByFolderID(ctx, item.ID)
+			if err != nil {
+				return nil, err
+			}
+			if !folderHistoricallyBelongsToRoot(base.Path, observations) {
+				continue
+			}
+			matchedWorkflowFolders = append(matchedWorkflowFolders, item)
+			memberIDs[strings.TrimSpace(item.ID)] = struct{}{}
+		}
+		if len(matchedWorkflowFolders) == 0 {
+			continue
+		}
+
+		plans[key] = aggregatePlan{
+			merged:    mergeTopLevelFolderAggregate(base, matchedWorkflowFolders),
+			memberIDs: memberIDs,
+		}
+	}
+
+	aggregated := make([]*repository.Folder, 0, len(items))
+	consumed := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		itemID := strings.TrimSpace(item.ID)
+		if _, ok := consumed[itemID]; ok {
+			continue
+		}
+
+		key := normalizeFolderAggregateKey(item.RelativePath)
+		plan, ok := plans[key]
+		if !ok {
+			aggregated = append(aggregated, item)
+			consumed[itemID] = struct{}{}
+			continue
+		}
+		if _, ok := plan.memberIDs[itemID]; !ok {
+			aggregated = append(aggregated, item)
+			consumed[itemID] = struct{}{}
+			continue
+		}
+
+		aggregated = append(aggregated, plan.merged)
+		for memberID := range plan.memberIDs {
+			consumed[memberID] = struct{}{}
+		}
+	}
+
+	return aggregated, nil
+}
+
+func normalizeFolderAggregateKey(relativePath string) string {
+	trimmed := strings.TrimSpace(relativePath)
+	if trimmed == "" {
+		return ""
+	}
+
+	normalized := strings.ReplaceAll(trimmed, `\`, "/")
+	return strings.Trim(normalized, "/")
+}
+
+func selectTopLevelAggregateBase(group []*repository.Folder) *repository.Folder {
+	var base *repository.Folder
+	for _, item := range group {
+		if item == nil {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(item.CategorySource), "workflow") {
+			continue
+		}
+		if base != nil {
+			return nil
+		}
+		base = item
+	}
+	return base
+}
+
+func folderHistoricallyBelongsToRoot(rootPath string, observations []*repository.FolderPathObservation) bool {
+	normalizedRootPath := normalizeFolderAggregatePath(rootPath)
+	if normalizedRootPath == "" {
+		return false
+	}
+
+	for _, observation := range observations {
+		if observation == nil {
+			continue
+		}
+		observedPath := normalizeFolderAggregatePath(observation.Path)
+		if observedPath == normalizedRootPath || strings.HasPrefix(observedPath, normalizedRootPath+"/") {
+			return true
+		}
+	}
+
+	return false
+}
+
+func normalizeFolderAggregatePath(path string) string {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return ""
+	}
+
+	normalized := strings.ReplaceAll(trimmed, `\`, "/")
+	return strings.TrimRight(normalized, "/")
+}
+
+func mergeTopLevelFolderAggregate(base *repository.Folder, workflowFolders []*repository.Folder) *repository.Folder {
+	merged := *base
+	merged.WorkflowSummary = mergeFolderWorkflowSummary(base.WorkflowSummary, repository.FolderWorkflowSummary{})
+
+	for _, item := range workflowFolders {
+		if item == nil {
+			continue
+		}
+		merged.WorkflowSummary = mergeFolderWorkflowSummary(merged.WorkflowSummary, item.WorkflowSummary)
+		if item.UpdatedAt.After(merged.UpdatedAt) {
+			merged.UpdatedAt = item.UpdatedAt
+		}
+		if merged.CoverImagePath == "" && strings.TrimSpace(item.CoverImagePath) != "" {
+			merged.CoverImagePath = item.CoverImagePath
+		}
+		merged.OutputCheckSummary = mergeFolderOutputCheckSummary(merged.OutputCheckSummary, item.OutputCheckSummary)
+	}
+
+	return &merged
+}
+
+func mergeFolderWorkflowSummary(current, candidate repository.FolderWorkflowSummary) repository.FolderWorkflowSummary {
+	current.Classification = mergeWorkflowStageSummary(current.Classification, candidate.Classification)
+	current.Processing = mergeWorkflowStageSummary(current.Processing, candidate.Processing)
+	return current
+}
+
+func mergeWorkflowStageSummary(current, candidate repository.WorkflowStageSummary) repository.WorkflowStageSummary {
+	if !shouldPreferWorkflowStageSummary(current, candidate) {
+		return current
+	}
+	return candidate
+}
+
+func shouldPreferWorkflowStageSummary(current, candidate repository.WorkflowStageSummary) bool {
+	candidateStatus := strings.TrimSpace(candidate.Status)
+	if candidateStatus == "" || candidateStatus == "not_run" {
+		return strings.TrimSpace(current.Status) == ""
+	}
+
+	currentStatus := strings.TrimSpace(current.Status)
+	if currentStatus == "" || currentStatus == "not_run" {
+		return true
+	}
+
+	if candidate.UpdatedAt != nil && !candidate.UpdatedAt.IsZero() {
+		if current.UpdatedAt == nil || current.UpdatedAt.IsZero() {
+			return true
+		}
+		if candidate.UpdatedAt.After(*current.UpdatedAt) {
+			return true
+		}
+		if candidate.UpdatedAt.Before(*current.UpdatedAt) {
+			return false
+		}
+	}
+
+	return workflowStageRank(candidateStatus) > workflowStageRank(currentStatus)
+}
+
+func workflowStageRank(status string) int {
+	switch strings.TrimSpace(status) {
+	case "failed":
+		return 6
+	case "waiting_input":
+		return 5
+	case "partial":
+		return 4
+	case "running":
+		return 3
+	case "succeeded":
+		return 2
+	case "rolled_back":
+		return 1
+	default:
+		return 0
+	}
+}
+
+func mergeFolderOutputCheckSummary(current, candidate repository.FolderOutputCheckSummary) repository.FolderOutputCheckSummary {
+	candidateStatus := strings.TrimSpace(candidate.Status)
+	currentStatus := strings.TrimSpace(current.Status)
+	if candidateStatus == "" {
+		return current
+	}
+	if currentStatus == "" || currentStatus == "pending" {
+		if candidateStatus != "pending" {
+			return candidate
+		}
+	}
+	if candidate.CheckedAt != nil && !candidate.CheckedAt.IsZero() {
+		if current.CheckedAt == nil || current.CheckedAt.IsZero() || candidate.CheckedAt.After(*current.CheckedAt) {
+			return candidate
+		}
+	}
+	return current
 }

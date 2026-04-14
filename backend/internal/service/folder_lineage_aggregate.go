@@ -18,17 +18,43 @@ func (s *FolderLineageService) buildArtifacts(
 	latestReview *repository.ProcessingReviewItem,
 	reviewPayload *FolderLineageReview,
 ) ([]folderLineageArtifact, error) {
-	artifacts := make([]folderLineageArtifact, 0, 8)
-	seen := map[string]struct{}{}
-
-	reviewTime := time.Time{}
+	folders := []*repository.Folder{{ID: folderID}}
+	reviewsByFolderID := map[string]*repository.ProcessingReviewItem{}
 	if latestReview != nil {
-		reviewTime = latestReview.UpdatedAt
-		if latestReview.ReviewedAt != nil && !latestReview.ReviewedAt.IsZero() {
-			reviewTime = latestReview.ReviewedAt.UTC()
-		}
+		reviewsByFolderID[strings.TrimSpace(folderID)] = latestReview
 	}
-	if reviewPayload != nil {
+	_ = reviewPayload
+	return s.buildArtifactsForFolders(ctx, folders, reviewsByFolderID)
+}
+
+func (s *FolderLineageService) buildFlow(
+	ctx context.Context,
+	folderID string,
+	latestReview *repository.ProcessingReviewItem,
+) (*FolderLineageFlow, error) {
+	folders := []*repository.Folder{{ID: folderID}}
+	reviewsByFolderID := map[string]*repository.ProcessingReviewItem{}
+	if latestReview != nil {
+		reviewsByFolderID[strings.TrimSpace(folderID)] = latestReview
+	}
+	return s.buildFlowForFolders(ctx, folders, reviewsByFolderID)
+}
+
+func (s *FolderLineageService) buildArtifactsForFolders(
+	ctx context.Context,
+	folders []*repository.Folder,
+	reviewsByFolderID map[string]*repository.ProcessingReviewItem,
+) ([]folderLineageArtifact, error) {
+	artifacts := make([]folderLineageArtifact, 0, len(folders)*4)
+	seen := map[string]struct{}{}
+	reviewJobsByWorkflowRun := buildLineageReviewJobsByWorkflowRun(reviewsByFolderID)
+
+	for _, review := range orderedFolderReviews(reviewsByFolderID) {
+		if review == nil {
+			continue
+		}
+		reviewPayload := buildFolderLineageReview(review)
+		reviewTime := folderReviewComparisonTime(review)
 		for _, path := range extractArtifactPaths(reviewPayload.After) {
 			normalized := normalizeLineagePath(path)
 			if normalized == "" {
@@ -48,123 +74,248 @@ func (s *FolderLineageService) buildArtifacts(
 		}
 	}
 
-	if len(artifacts) > 0 || s.mappings == nil {
-		return artifacts, nil
+	if s.mappings == nil {
+		return sortFolderLineageArtifacts(artifacts), nil
 	}
 
-	workflowRunID := ""
-	if latestReview != nil {
-		workflowRunID = strings.TrimSpace(latestReview.WorkflowRunID)
-	}
-	mappings := []*repository.FolderOutputMapping{}
-	if workflowRunID != "" {
-		items, listErr := s.mappings.ListByWorkflowRunAndFolderID(ctx, workflowRunID, folderID)
-		if listErr != nil && !errors.Is(listErr, repository.ErrNotFound) {
-			return nil, fmt.Errorf("folderLineage.buildArtifacts list output mappings for run %q folder %q: %w", workflowRunID, folderID, listErr)
+	for _, folder := range folders {
+		if folder == nil {
+			continue
 		}
-		if listErr == nil {
-			mappings = append(mappings, items...)
+		folderID := strings.TrimSpace(folder.ID)
+		review := reviewsByFolderID[folderID]
+		preferredRunID := ""
+		if review != nil {
+			preferredRunID = strings.TrimSpace(review.WorkflowRunID)
 		}
-	}
-	if len(mappings) == 0 {
-		latestRunID, runErr := s.mappings.GetLatestWorkflowRunIDByFolderID(ctx, folderID)
-		if runErr != nil && !errors.Is(runErr, repository.ErrNotFound) {
-			return nil, fmt.Errorf("folderLineage.buildArtifacts get latest output mapping run for folder %q: %w", folderID, runErr)
+
+		mappings, _, err := s.loadLineageMappingsForFolder(ctx, folderID, preferredRunID)
+		if err != nil {
+			return nil, err
 		}
-		if runErr == nil && strings.TrimSpace(latestRunID) != "" {
-			items, listErr := s.mappings.ListByWorkflowRunAndFolderID(ctx, latestRunID, folderID)
-			if listErr != nil && !errors.Is(listErr, repository.ErrNotFound) {
-				return nil, fmt.Errorf("folderLineage.buildArtifacts list output mappings for latest run %q folder %q: %w", latestRunID, folderID, listErr)
+		for _, mapping := range mappings {
+			if mapping == nil {
+				continue
 			}
-			if listErr == nil {
-				mappings = append(mappings, items...)
+			normalized := normalizeLineagePath(mapping.OutputPath)
+			if normalized == "" {
+				continue
 			}
+			if _, ok := seen[normalized]; ok {
+				continue
+			}
+			seen[normalized] = struct{}{}
+			artifacts = append(artifacts, folderLineageArtifact{
+				path:          normalized,
+				stepType:      strings.TrimSpace(mapping.NodeType),
+				occurredAt:    mapping.CreatedAt,
+				workflowRunID: strings.TrimSpace(mapping.WorkflowRunID),
+				jobID:         reviewJobsByWorkflowRun[strings.TrimSpace(mapping.WorkflowRunID)],
+			})
 		}
 	}
 
-	for _, mapping := range mappings {
-		if mapping == nil {
-			continue
-		}
-		normalized := normalizeLineagePath(mapping.OutputPath)
-		if normalized == "" {
-			continue
-		}
-		if _, ok := seen[normalized]; ok {
-			continue
-		}
-		seen[normalized] = struct{}{}
-		artifacts = append(artifacts, folderLineageArtifact{
-			path:          normalized,
-			stepType:      strings.TrimSpace(mapping.NodeType),
-			occurredAt:    mapping.CreatedAt,
-			workflowRunID: strings.TrimSpace(mapping.WorkflowRunID),
-		})
+	return sortFolderLineageArtifacts(artifacts), nil
+}
+
+func (s *FolderLineageService) buildFlowForFolders(
+	ctx context.Context,
+	folders []*repository.Folder,
+	reviewsByFolderID map[string]*repository.ProcessingReviewItem,
+) (*FolderLineageFlow, error) {
+	if s.manifests == nil || s.mappings == nil {
+		return nil, nil
 	}
 
+	reviewJobsByWorkflowRun := buildLineageReviewJobsByWorkflowRun(reviewsByFolderID)
+	combinedManifests := make([]*repository.FolderSourceManifest, 0, len(folders)*8)
+	combinedMappings := make([]*repository.FolderOutputMapping, 0, len(folders)*8)
+	seenManifestIDs := make(map[string]struct{})
+	seenMappingIDs := make(map[string]struct{})
+
+	for _, folder := range folders {
+		if folder == nil {
+			continue
+		}
+		folderID := strings.TrimSpace(folder.ID)
+		review := reviewsByFolderID[folderID]
+		preferredRunID := ""
+		if review != nil {
+			preferredRunID = strings.TrimSpace(review.WorkflowRunID)
+		}
+
+		mappings, workflowRunID, err := s.loadLineageMappingsForFolder(ctx, folderID, preferredRunID)
+		if err != nil {
+			return nil, err
+		}
+		if len(mappings) == 0 {
+			continue
+		}
+
+		manifests, err := s.loadLineageManifestsForFolderRun(ctx, folderID, workflowRunID, mappings, reviewJobsByWorkflowRun)
+		if err != nil {
+			return nil, err
+		}
+		if len(manifests) == 0 {
+			continue
+		}
+
+		for _, manifest := range manifests {
+			if manifest == nil {
+				continue
+			}
+			manifestID := strings.TrimSpace(manifest.ID)
+			if manifestID != "" {
+				if _, ok := seenManifestIDs[manifestID]; ok {
+					continue
+				}
+				seenManifestIDs[manifestID] = struct{}{}
+			}
+			combinedManifests = append(combinedManifests, manifest)
+		}
+		for _, mapping := range mappings {
+			if mapping == nil {
+				continue
+			}
+			mappingID := strings.TrimSpace(mapping.ID)
+			if mappingID != "" {
+				if _, ok := seenMappingIDs[mappingID]; ok {
+					continue
+				}
+				seenMappingIDs[mappingID] = struct{}{}
+			}
+			combinedMappings = append(combinedMappings, mapping)
+		}
+	}
+
+	if len(combinedManifests) == 0 || len(combinedMappings) == 0 {
+		return nil, nil
+	}
+
+	flow, _, _ := buildFolderLineageFlow(combinedManifests, combinedMappings, reviewJobsByWorkflowRun)
+	return flow, nil
+}
+
+func sortFolderLineageArtifacts(artifacts []folderLineageArtifact) []folderLineageArtifact {
 	sort.Slice(artifacts, func(i, j int) bool {
 		if artifacts[i].occurredAt.Equal(artifacts[j].occurredAt) {
 			return artifacts[i].path < artifacts[j].path
 		}
 		return artifacts[i].occurredAt.Before(artifacts[j].occurredAt)
 	})
-
-	return artifacts, nil
+	return artifacts
 }
 
-func (s *FolderLineageService) buildFlow(
+func buildLineageReviewJobsByWorkflowRun(
+	reviewsByFolderID map[string]*repository.ProcessingReviewItem,
+) map[string]string {
+	jobsByWorkflowRun := make(map[string]string, len(reviewsByFolderID))
+	for _, review := range reviewsByFolderID {
+		if review == nil {
+			continue
+		}
+		workflowRunID := strings.TrimSpace(review.WorkflowRunID)
+		if workflowRunID == "" {
+			continue
+		}
+		jobsByWorkflowRun[workflowRunID] = strings.TrimSpace(review.JobID)
+	}
+	return jobsByWorkflowRun
+}
+
+func (s *FolderLineageService) loadLineageMappingsForFolder(
 	ctx context.Context,
 	folderID string,
-	latestReview *repository.ProcessingReviewItem,
-) (*FolderLineageFlow, error) {
-	if s.manifests == nil || s.mappings == nil {
-		return nil, nil
+	preferredWorkflowRunID string,
+) ([]*repository.FolderOutputMapping, string, error) {
+	if s.mappings == nil {
+		return nil, "", nil
 	}
 
-	manifests, err := s.manifests.ListByFolderID(ctx, folderID)
-	if err != nil {
-		return nil, fmt.Errorf("folderLineage.buildFlow list source manifests for folder %q: %w", folderID, err)
-	}
-	if len(manifests) == 0 {
-		return nil, nil
+	workflowRunID := strings.TrimSpace(preferredWorkflowRunID)
+	if workflowRunID != "" {
+		items, err := s.mappings.ListByWorkflowRunAndFolderID(ctx, workflowRunID, folderID)
+		if err != nil && !errors.Is(err, repository.ErrNotFound) {
+			return nil, "", fmt.Errorf("folderLineage.loadLineageMappingsForFolder list output mappings for run %q folder %q: %w", workflowRunID, folderID, err)
+		}
+		if err == nil && len(items) > 0 {
+			return items, workflowRunID, nil
+		}
 	}
 
 	workflowRunID, err := s.mappings.GetLatestWorkflowRunIDByFolderID(ctx, folderID)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
-			return nil, nil
+			return nil, "", nil
 		}
-		return nil, fmt.Errorf("folderLineage.buildFlow get latest output mapping run for folder %q: %w", folderID, err)
+		return nil, "", fmt.Errorf("folderLineage.loadLineageMappingsForFolder get latest output mapping run for folder %q: %w", folderID, err)
 	}
 
-	mappings, err := s.mappings.ListByWorkflowRunAndFolderID(ctx, workflowRunID, folderID)
+	items, err := s.mappings.ListByWorkflowRunAndFolderID(ctx, workflowRunID, folderID)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
-			return nil, nil
+			return nil, "", nil
 		}
-		return nil, fmt.Errorf("folderLineage.buildFlow list output mappings for latest run %q folder %q: %w", workflowRunID, folderID, err)
+		return nil, "", fmt.Errorf("folderLineage.loadLineageMappingsForFolder list output mappings for latest run %q folder %q: %w", workflowRunID, folderID, err)
 	}
-	if len(mappings) == 0 {
+
+	return items, workflowRunID, nil
+}
+
+func (s *FolderLineageService) loadLineageManifestsForFolderRun(
+	ctx context.Context,
+	folderID string,
+	workflowRunID string,
+	mappings []*repository.FolderOutputMapping,
+	reviewJobsByWorkflowRun map[string]string,
+) ([]*repository.FolderSourceManifest, error) {
+	if s.manifests == nil {
 		return nil, nil
 	}
 
+	trimmedWorkflowRunID := strings.TrimSpace(workflowRunID)
+	if trimmedWorkflowRunID != "" {
+		items, err := s.manifests.ListByWorkflowRunAndFolderID(ctx, trimmedWorkflowRunID, folderID)
+		if err != nil && !errors.Is(err, repository.ErrNotFound) {
+			return nil, fmt.Errorf("folderLineage.loadLineageManifestsForFolderRun list manifests for run %q folder %q: %w", trimmedWorkflowRunID, folderID, err)
+		}
+		if err == nil && len(items) > 0 {
+			return items, nil
+		}
+	}
+
+	items, err := s.manifests.ListByFolderID(ctx, folderID)
+	if err != nil {
+		return nil, fmt.Errorf("folderLineage.loadLineageManifestsForFolderRun list manifests for folder %q: %w", folderID, err)
+	}
+	if len(items) == 0 {
+		return nil, nil
+	}
+
+	return selectBestLineageManifestBatch(items, mappings, reviewJobsByWorkflowRun), nil
+}
+
+func selectBestLineageManifestBatch(
+	manifests []*repository.FolderSourceManifest,
+	mappings []*repository.FolderOutputMapping,
+	reviewJobsByWorkflowRun map[string]string,
+) []*repository.FolderSourceManifest {
 	batches := groupLineageManifestBatches(manifests)
 	bestScore := -1
 	bestExactMatches := -1
-	var bestFlow *FolderLineageFlow
+	var bestBatch []*repository.FolderSourceManifest
 	for _, batch := range batches {
-		flow, exactMatches, score := buildFolderLineageFlow(batch, mappings, latestReview)
+		flow, exactMatches, score := buildFolderLineageFlow(batch, mappings, reviewJobsByWorkflowRun)
 		if flow == nil {
 			continue
 		}
 		if exactMatches > bestExactMatches || (exactMatches == bestExactMatches && score > bestScore) {
-			bestFlow = flow
+			bestBatch = batch
 			bestExactMatches = exactMatches
 			bestScore = score
 		}
 	}
-
-	return bestFlow, nil
+	return bestBatch
 }
 
 func groupLineageManifestBatches(manifests []*repository.FolderSourceManifest) [][]*repository.FolderSourceManifest {
@@ -197,7 +348,7 @@ func groupLineageManifestBatches(manifests []*repository.FolderSourceManifest) [
 func buildFolderLineageFlow(
 	manifests []*repository.FolderSourceManifest,
 	mappings []*repository.FolderOutputMapping,
-	latestReview *repository.ProcessingReviewItem,
+	reviewJobsByWorkflowRun map[string]string,
 ) (*FolderLineageFlow, int, int) {
 	sourceDirectoryPath := deriveLineageSourceDirectoryPath(manifests)
 	if sourceDirectoryPath == "." {
@@ -266,13 +417,6 @@ func buildFolderLineageFlow(
 	links := make([]FolderLineageFlowLink, 0, len(mappings))
 	exactMatchCount := 0
 
-	reviewJobID := ""
-	reviewWorkflowRunID := ""
-	if latestReview != nil {
-		reviewJobID = strings.TrimSpace(latestReview.JobID)
-		reviewWorkflowRunID = strings.TrimSpace(latestReview.WorkflowRunID)
-	}
-
 	for idx, mapping := range mappings {
 		if mapping == nil {
 			continue
@@ -323,10 +467,7 @@ func buildFolderLineageFlow(
 		if targetFileID == "" {
 			targetFileID = fmt.Sprintf("target-file-%d", idx+1)
 		}
-		jobID := ""
-		if reviewWorkflowRunID != "" && reviewWorkflowRunID == strings.TrimSpace(mapping.WorkflowRunID) {
-			jobID = reviewJobID
-		}
+		jobID := reviewJobsByWorkflowRun[strings.TrimSpace(mapping.WorkflowRunID)]
 
 		targetFiles = append(targetFiles, FolderLineageFlowTargetFile{
 			ID:            targetFileID,
@@ -429,7 +570,7 @@ func deriveLineageSourceDirectoryPath(manifests []*repository.FolderSourceManife
 
 func (s *FolderLineageService) buildTimeline(
 	ctx context.Context,
-	folderID string,
+	folderIDs []string,
 	observations []*repository.FolderPathObservation,
 	transitions []folderLineagePathTransition,
 	artifacts []folderLineageArtifact,
@@ -495,33 +636,41 @@ func (s *FolderLineageService) buildTimeline(
 	}
 
 	if s.audits != nil {
-		logs, _, listErr := s.audits.List(ctx, repository.AuditListFilter{
-			FolderID: folderID,
-			Page:     1,
-			Limit:    2000,
-		})
-		if listErr != nil {
-			return nil, fmt.Errorf("folderLineage.buildTimeline list audit logs for folder %q: %w", folderID, listErr)
-		}
-		for _, log := range logs {
-			if log == nil || !isFailedAuditLog(log) {
-				continue
-			}
-			description := strings.TrimSpace(log.ErrorMsg)
-			if description == "" {
-				description = strings.TrimSpace(log.Action)
-			}
-			events = append(events, FolderLineageTimelineEvent{
-				ID:            "audit-" + strings.TrimSpace(log.ID),
-				Type:          folderLineageEventTypeProcessingFail,
-				OccurredAt:    log.CreatedAt,
-				Title:         "处理失败",
-				Description:   description,
-				PathTo:        normalizeLineagePath(log.FolderPath),
-				WorkflowRunID: strings.TrimSpace(log.WorkflowRunID),
-				JobID:         strings.TrimSpace(log.JobID),
-				StepType:      strings.TrimSpace(log.NodeType),
+		seenAuditIDs := map[string]struct{}{}
+		for _, folderID := range folderIDs {
+			logs, _, listErr := s.audits.List(ctx, repository.AuditListFilter{
+				FolderID: folderID,
+				Page:     1,
+				Limit:    2000,
 			})
+			if listErr != nil {
+				return nil, fmt.Errorf("folderLineage.buildTimeline list audit logs for folder %q: %w", folderID, listErr)
+			}
+			for _, log := range logs {
+				if log == nil || !isFailedAuditLog(log) {
+					continue
+				}
+				auditID := strings.TrimSpace(log.ID)
+				if _, ok := seenAuditIDs[auditID]; ok {
+					continue
+				}
+				seenAuditIDs[auditID] = struct{}{}
+				description := strings.TrimSpace(log.ErrorMsg)
+				if description == "" {
+					description = strings.TrimSpace(log.Action)
+				}
+				events = append(events, FolderLineageTimelineEvent{
+					ID:            "audit-" + auditID,
+					Type:          folderLineageEventTypeProcessingFail,
+					OccurredAt:    log.CreatedAt,
+					Title:         "处理失败",
+					Description:   description,
+					PathTo:        normalizeLineagePath(log.FolderPath),
+					WorkflowRunID: strings.TrimSpace(log.WorkflowRunID),
+					JobID:         strings.TrimSpace(log.JobID),
+					StepType:      strings.TrimSpace(log.NodeType),
+				})
+			}
 		}
 	}
 

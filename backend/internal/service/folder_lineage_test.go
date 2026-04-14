@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,37 +11,108 @@ import (
 )
 
 type stubLineageFolderRepo struct {
-	folder       *repository.Folder
-	observations []*repository.FolderPathObservation
+	folder                 *repository.Folder
+	folders                map[string]*repository.Folder
+	observations           []*repository.FolderPathObservation
+	observationsByFolderID map[string][]*repository.FolderPathObservation
 }
 
-func (s *stubLineageFolderRepo) GetByID(_ context.Context, _ string) (*repository.Folder, error) {
+func (s *stubLineageFolderRepo) GetByID(_ context.Context, id string) (*repository.Folder, error) {
+	if s != nil && s.folders != nil {
+		if folder, ok := s.folders[id]; ok && folder != nil {
+			return folder, nil
+		}
+	}
 	if s.folder == nil {
 		return nil, repository.ErrNotFound
 	}
 	return s.folder, nil
 }
 
-func (s *stubLineageFolderRepo) ListPathObservationsByFolderID(_ context.Context, _ string) ([]*repository.FolderPathObservation, error) {
+func (s *stubLineageFolderRepo) ListByPathPrefix(_ context.Context, prefix string) ([]*repository.Folder, error) {
+	folders := s.listFolders()
+	items := make([]*repository.Folder, 0, len(folders))
+	normalizedPrefix := normalizeLineagePath(prefix)
+	for _, folder := range folders {
+		if folder == nil {
+			continue
+		}
+		normalizedPath := normalizeLineagePath(folder.Path)
+		if normalizedPath == normalizedPrefix || strings.HasPrefix(normalizedPath, normalizedPrefix+"/") {
+			items = append(items, folder)
+		}
+	}
+	return items, nil
+}
+
+func (s *stubLineageFolderRepo) ListByRelativePath(_ context.Context, relativePath string) ([]*repository.Folder, error) {
+	folders := s.listFolders()
+	items := make([]*repository.Folder, 0, len(folders))
+	for _, folder := range folders {
+		if folder == nil {
+			continue
+		}
+		if strings.TrimSpace(folder.RelativePath) == strings.TrimSpace(relativePath) {
+			items = append(items, folder)
+		}
+	}
+	return items, nil
+}
+
+func (s *stubLineageFolderRepo) ListPathObservationsByFolderID(_ context.Context, folderID string) ([]*repository.FolderPathObservation, error) {
+	if s != nil && s.observationsByFolderID != nil {
+		return s.observationsByFolderID[folderID], nil
+	}
 	return s.observations, nil
 }
 
-type stubLineageSnapshotRepo struct {
-	items []*repository.Snapshot
+func (s *stubLineageFolderRepo) listFolders() []*repository.Folder {
+	if s == nil {
+		return nil
+	}
+	if s.folders != nil {
+		items := make([]*repository.Folder, 0, len(s.folders))
+		for _, folder := range s.folders {
+			if folder == nil {
+				continue
+			}
+			items = append(items, folder)
+		}
+		return items
+	}
+	if s.folder == nil {
+		return nil
+	}
+	return []*repository.Folder{s.folder}
 }
 
-func (s *stubLineageSnapshotRepo) ListByFolderID(_ context.Context, _ string) ([]*repository.Snapshot, error) {
+type stubLineageSnapshotRepo struct {
+	items      []*repository.Snapshot
+	byFolderID map[string][]*repository.Snapshot
+}
+
+func (s *stubLineageSnapshotRepo) ListByFolderID(_ context.Context, folderID string) ([]*repository.Snapshot, error) {
+	if s != nil && s.byFolderID != nil {
+		return s.byFolderID[folderID], nil
+	}
 	return s.items, nil
 }
 
 type stubLineageReviewRepo struct {
-	item *repository.ProcessingReviewItem
-	err  error
+	item       *repository.ProcessingReviewItem
+	byFolderID map[string]*repository.ProcessingReviewItem
+	err        error
 }
 
-func (s *stubLineageReviewRepo) GetLatestByFolderID(_ context.Context, _ string) (*repository.ProcessingReviewItem, error) {
+func (s *stubLineageReviewRepo) GetLatestByFolderID(_ context.Context, folderID string) (*repository.ProcessingReviewItem, error) {
 	if s.err != nil {
 		return nil, s.err
+	}
+	if s != nil && s.byFolderID != nil {
+		if item, ok := s.byFolderID[folderID]; ok && item != nil {
+			return item, nil
+		}
+		return nil, repository.ErrNotFound
 	}
 	if s.item == nil {
 		return nil, repository.ErrNotFound
@@ -57,35 +129,77 @@ func (s *stubLineageAuditRepo) List(_ context.Context, _ repository.AuditListFil
 }
 
 type stubLineageOutputMappingRepo struct {
-	latestWorkflowRunID string
-	byWorkflowRun       map[string][]*repository.FolderOutputMapping
+	latestWorkflowRunID           string
+	latestWorkflowRunIDByFolderID map[string]string
+	byWorkflowRun                 map[string][]*repository.FolderOutputMapping
+	byWorkflowRunAndFolder        map[string][]*repository.FolderOutputMapping
 }
 
-func (s *stubLineageOutputMappingRepo) GetLatestWorkflowRunIDByFolderID(_ context.Context, _ string) (string, error) {
+func (s *stubLineageOutputMappingRepo) GetLatestWorkflowRunIDByFolderID(_ context.Context, folderID string) (string, error) {
+	if s != nil && s.latestWorkflowRunIDByFolderID != nil {
+		if workflowRunID, ok := s.latestWorkflowRunIDByFolderID[folderID]; ok && strings.TrimSpace(workflowRunID) != "" {
+			return workflowRunID, nil
+		}
+	}
 	if s.latestWorkflowRunID == "" {
 		return "", repository.ErrNotFound
 	}
 	return s.latestWorkflowRunID, nil
 }
 
-func (s *stubLineageOutputMappingRepo) ListByWorkflowRunAndFolderID(_ context.Context, workflowRunID, _ string) ([]*repository.FolderOutputMapping, error) {
+func (s *stubLineageOutputMappingRepo) ListByWorkflowRunAndFolderID(_ context.Context, workflowRunID, folderID string) ([]*repository.FolderOutputMapping, error) {
+	if s != nil && s.byWorkflowRunAndFolder != nil {
+		items := s.byWorkflowRunAndFolder[lineageWorkflowRunFolderKey(workflowRunID, folderID)]
+		if len(items) == 0 {
+			return nil, repository.ErrNotFound
+		}
+		return items, nil
+	}
 	items := s.byWorkflowRun[workflowRunID]
 	if len(items) == 0 {
 		return nil, repository.ErrNotFound
 	}
-	return items, nil
+	filtered := make([]*repository.FolderOutputMapping, 0, len(items))
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		if strings.TrimSpace(item.FolderID) == strings.TrimSpace(folderID) {
+			filtered = append(filtered, item)
+		}
+	}
+	if len(filtered) == 0 {
+		return nil, repository.ErrNotFound
+	}
+	return filtered, nil
 }
 
 type stubLineageSourceManifestRepo struct {
-	items []*repository.FolderSourceManifest
+	items                  []*repository.FolderSourceManifest
+	byFolderID             map[string][]*repository.FolderSourceManifest
+	byWorkflowRunAndFolder map[string][]*repository.FolderSourceManifest
 }
 
 func (s *stubLineageSourceManifestRepo) ListLatestByFolderID(_ context.Context, _ string) ([]*repository.FolderSourceManifest, error) {
 	return s.items, nil
 }
 
-func (s *stubLineageSourceManifestRepo) ListByFolderID(_ context.Context, _ string) ([]*repository.FolderSourceManifest, error) {
+func (s *stubLineageSourceManifestRepo) ListByFolderID(_ context.Context, folderID string) ([]*repository.FolderSourceManifest, error) {
+	if s != nil && s.byFolderID != nil {
+		return s.byFolderID[folderID], nil
+	}
 	return s.items, nil
+}
+
+func (s *stubLineageSourceManifestRepo) ListByWorkflowRunAndFolderID(_ context.Context, workflowRunID, folderID string) ([]*repository.FolderSourceManifest, error) {
+	if s != nil && s.byWorkflowRunAndFolder != nil {
+		return s.byWorkflowRunAndFolder[lineageWorkflowRunFolderKey(workflowRunID, folderID)], nil
+	}
+	return nil, nil
+}
+
+func lineageWorkflowRunFolderKey(workflowRunID, folderID string) string {
+	return strings.TrimSpace(workflowRunID) + "|" + strings.TrimSpace(folderID)
 }
 
 func testLineageTime(hour int) time.Time {
@@ -844,5 +958,289 @@ func TestFolderLineageServiceReviewTransitionPrefersExecutedSteps(t *testing.T) 
 	}
 	if !foundExpected {
 		t.Fatalf("expected move event from executed_steps not found, timeline=%#v", resp.Timeline)
+	}
+}
+
+func TestFolderLineageServiceAggregatesRelatedWorkflowFoldersForRootLineage(t *testing.T) {
+	t.Parallel()
+
+	rootFolder := &repository.Folder{
+		ID:             "root",
+		Path:           "/scan/album",
+		SourceDir:      "/scan",
+		RelativePath:   "album",
+		Name:           "album",
+		Category:       "mixed",
+		CategorySource: "auto",
+		Status:         "pending",
+	}
+	imagesFolder := &repository.Folder{
+		ID:             "images",
+		Path:           "/scan/album/Images",
+		SourceDir:      "/scan",
+		RelativePath:   "album/Images",
+		Name:           "Images",
+		Category:       "photo",
+		CategorySource: "workflow",
+		Status:         "done",
+	}
+	videosFolder := &repository.Folder{
+		ID:             "videos",
+		Path:           "/target/video/album",
+		SourceDir:      "/target/video",
+		RelativePath:   "album",
+		Name:           "album",
+		Category:       "video",
+		CategorySource: "workflow",
+		Status:         "done",
+	}
+	unrelatedFolder := &repository.Folder{
+		ID:             "unrelated",
+		Path:           "/target/video/album",
+		SourceDir:      "/target/video",
+		RelativePath:   "album",
+		Name:           "album",
+		Category:       "video",
+		CategorySource: "workflow",
+		Status:         "done",
+	}
+
+	videoReview := &repository.ProcessingReviewItem{
+		ID:            "review-videos",
+		WorkflowRunID: "wr-videos",
+		JobID:         "job-videos",
+		FolderID:      "videos",
+		Status:        "approved",
+		BeforeJSON: mustJSONRawMessage(t, map[string]any{
+			"path": "/scan/album/Videos",
+		}),
+		AfterJSON: mustJSONRawMessage(t, map[string]any{
+			"path":           "/target/video/album",
+			"artifact_paths": []string{"/target/video/album/clip-01.mp4", "/target/thumbs/album/clip-01.jpg"},
+		}),
+		StepResultsJSON: mustJSONRawMessage(t, []map[string]any{
+			{
+				"node_type":   "move-node",
+				"source_path": "/scan/album/Videos",
+				"target_path": "/target/video/album",
+				"status":      "succeeded",
+			},
+			{
+				"node_type":   "thumbnail-node",
+				"source_path": "/scan/album/Videos/clip-01.mp4",
+				"target_path": "/target/thumbs/album/clip-01.jpg",
+				"status":      "succeeded",
+			},
+		}),
+		UpdatedAt: testLineageTime(4),
+	}
+
+	svc := NewFolderLineageService(
+		&stubLineageFolderRepo{
+			folders: map[string]*repository.Folder{
+				"root":      rootFolder,
+				"images":    imagesFolder,
+				"videos":    videosFolder,
+				"unrelated": unrelatedFolder,
+			},
+			observationsByFolderID: map[string][]*repository.FolderPathObservation{
+				"root": {{
+					ID:          "o-root",
+					FolderID:    "root",
+					Path:        "/scan/album",
+					IsCurrent:   true,
+					FirstSeenAt: testLineageTime(1),
+					LastSeenAt:  testLineageTime(4),
+				}},
+				"images": {{
+					ID:          "o-images",
+					FolderID:    "images",
+					Path:        "/scan/album/Images",
+					IsCurrent:   true,
+					FirstSeenAt: testLineageTime(2),
+					LastSeenAt:  testLineageTime(4),
+				}},
+				"videos": {
+					{
+						ID:          "o-videos-source",
+						FolderID:    "videos",
+						Path:        "/scan/album/Videos",
+						FirstSeenAt: testLineageTime(2),
+						LastSeenAt:  testLineageTime(3),
+					},
+					{
+						ID:          "o-videos-target",
+						FolderID:    "videos",
+						Path:        "/target/video/album",
+						IsCurrent:   true,
+						FirstSeenAt: testLineageTime(4),
+						LastSeenAt:  testLineageTime(4),
+					},
+				},
+				"unrelated": {
+					{
+						ID:          "o-unrelated-source",
+						FolderID:    "unrelated",
+						Path:        "/other-root/album",
+						FirstSeenAt: testLineageTime(1),
+						LastSeenAt:  testLineageTime(2),
+					},
+					{
+						ID:          "o-unrelated-target",
+						FolderID:    "unrelated",
+						Path:        "/target/video/album",
+						IsCurrent:   true,
+						FirstSeenAt: testLineageTime(3),
+						LastSeenAt:  testLineageTime(3),
+					},
+				},
+			},
+		},
+		&stubLineageSnapshotRepo{},
+		&stubLineageReviewRepo{
+			byFolderID: map[string]*repository.ProcessingReviewItem{
+				"videos": videoReview,
+			},
+		},
+		&stubLineageAuditRepo{},
+		&stubLineageSourceManifestRepo{
+			byFolderID: map[string][]*repository.FolderSourceManifest{
+				"images": {{
+					ID:            "sm-images",
+					WorkflowRunID: "wr-images",
+					FolderID:      "images",
+					BatchID:       "batch-images",
+					SourcePath:    "/scan/album/Images/cover.jpg",
+					RelativePath:  "Images/cover.jpg",
+					FileName:      "cover.jpg",
+					SizeBytes:     120,
+				}},
+				"videos": {{
+					ID:            "sm-videos",
+					WorkflowRunID: "wr-videos",
+					FolderID:      "videos",
+					BatchID:       "batch-videos",
+					SourcePath:    "/scan/album/Videos/clip-01.mp4",
+					RelativePath:  "Videos/clip-01.mp4",
+					FileName:      "clip-01.mp4",
+					SizeBytes:     240,
+				}},
+			},
+			byWorkflowRunAndFolder: map[string][]*repository.FolderSourceManifest{
+				lineageWorkflowRunFolderKey("wr-images", "images"): {{
+					ID:            "sm-images",
+					WorkflowRunID: "wr-images",
+					FolderID:      "images",
+					BatchID:       "batch-images",
+					SourcePath:    "/scan/album/Images/cover.jpg",
+					RelativePath:  "Images/cover.jpg",
+					FileName:      "cover.jpg",
+					SizeBytes:     120,
+				}},
+				lineageWorkflowRunFolderKey("wr-videos", "videos"): {{
+					ID:            "sm-videos",
+					WorkflowRunID: "wr-videos",
+					FolderID:      "videos",
+					BatchID:       "batch-videos",
+					SourcePath:    "/scan/album/Videos/clip-01.mp4",
+					RelativePath:  "Videos/clip-01.mp4",
+					FileName:      "clip-01.mp4",
+					SizeBytes:     240,
+				}},
+			},
+		},
+		&stubLineageOutputMappingRepo{
+			latestWorkflowRunIDByFolderID: map[string]string{
+				"images": "wr-images",
+				"videos": "wr-videos",
+			},
+			byWorkflowRunAndFolder: map[string][]*repository.FolderOutputMapping{
+				lineageWorkflowRunFolderKey("wr-images", "images"): {{
+					ID:                 "map-images",
+					WorkflowRunID:      "wr-images",
+					FolderID:           "images",
+					SourcePath:         "/scan/album/Images/cover.jpg",
+					SourceRelativePath: "Images/cover.jpg",
+					OutputPath:         "/target/images/album/cover.jpg",
+					NodeType:           "move-node",
+					ArtifactType:       "primary",
+					CreatedAt:          testLineageTime(3),
+				}},
+				lineageWorkflowRunFolderKey("wr-videos", "videos"): {
+					{
+						ID:                 "map-videos-primary",
+						WorkflowRunID:      "wr-videos",
+						FolderID:           "videos",
+						SourcePath:         "/scan/album/Videos/clip-01.mp4",
+						SourceRelativePath: "Videos/clip-01.mp4",
+						OutputPath:         "/target/video/album/clip-01.mp4",
+						NodeType:           "move-node",
+						ArtifactType:       "primary",
+						CreatedAt:          testLineageTime(4),
+					},
+					{
+						ID:                 "map-videos-thumb",
+						WorkflowRunID:      "wr-videos",
+						FolderID:           "videos",
+						SourcePath:         "/scan/album/Videos/clip-01.mp4",
+						SourceRelativePath: "Videos/clip-01.mp4",
+						OutputPath:         "/target/thumbs/album/clip-01.jpg",
+						NodeType:           "thumbnail-node",
+						ArtifactType:       "thumbnail",
+						CreatedAt:          testLineageTime(4),
+					},
+				},
+			},
+		},
+	)
+
+	resp, err := svc.GetFolderLineage(context.Background(), "root")
+	if err != nil {
+		t.Fatalf("GetFolderLineage() error = %v", err)
+	}
+
+	if resp.Flow == nil {
+		t.Fatalf("flow should not be nil")
+	}
+	if resp.Flow.SourceDirectory.Path != "/scan/album" {
+		t.Fatalf("flow.source_directory.path = %q, want /scan/album", resp.Flow.SourceDirectory.Path)
+	}
+	if len(resp.Flow.SourceFiles) != 2 {
+		t.Fatalf("len(flow.source_files) = %d, want 2", len(resp.Flow.SourceFiles))
+	}
+	if len(resp.Flow.TargetFiles) != 3 || len(resp.Flow.Links) != 3 {
+		t.Fatalf("target_files/links invalid target=%d links=%d", len(resp.Flow.TargetFiles), len(resp.Flow.Links))
+	}
+
+	targetPaths := map[string]bool{}
+	for _, file := range resp.Flow.TargetFiles {
+		targetPaths[file.Path] = true
+	}
+	for _, expectedPath := range []string{
+		"/target/images/album/cover.jpg",
+		"/target/video/album/clip-01.mp4",
+		"/target/thumbs/album/clip-01.jpg",
+	} {
+		if !targetPaths[expectedPath] {
+			t.Fatalf("flow target missing %q", expectedPath)
+		}
+	}
+
+	if resp.Summary.OriginalPath != "/scan/album" || resp.Summary.CurrentPath != "/scan/album" {
+		t.Fatalf("summary original/current = %q/%q, want /scan/album", resp.Summary.OriginalPath, resp.Summary.CurrentPath)
+	}
+	if resp.Review == nil || resp.Review.WorkflowRunID != "wr-videos" {
+		t.Fatalf("review = %#v, want latest related review for videos", resp.Review)
+	}
+
+	foundMoveEvent := false
+	for _, event := range resp.Timeline {
+		if event.PathFrom == "/scan/album/Videos" && event.PathTo == "/target/video/album" {
+			foundMoveEvent = true
+			break
+		}
+	}
+	if !foundMoveEvent {
+		t.Fatalf("aggregated timeline missing related workflow move event: %#v", resp.Timeline)
 	}
 }

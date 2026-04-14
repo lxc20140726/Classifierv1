@@ -20,6 +20,8 @@ type snapshotPathState struct {
 
 var errSnapshotAlreadyReverted = errors.New("snapshot already reverted")
 
+var errSnapshotUnsupportedRevert = errors.New("snapshot revert is only supported for path change snapshots")
+
 // RevertResult describes the outcome of a revert attempt.
 type RevertResult struct {
 	OK           bool                `json:"ok"`
@@ -115,9 +117,23 @@ func (s *SnapshotService) Revert(ctx context.Context, snapshotID string) (*Rever
 		stateJSON = snapshot.Before
 	}
 
-	var states []snapshotPathState
-	if err := json.Unmarshal(stateJSON, &states); err != nil {
-		return nil, fmt.Errorf("snapshot.Revert parse snapshot state: %w", err)
+	if !snapshotSupportsPathRevert(snapshot.OperationType) {
+		result := &RevertResult{
+			OK:           false,
+			ErrorMessage: fmt.Sprintf("当前快照类型 %q 不支持在这里回退，只有移动或重命名类快照可以执行路径回退", snapshot.OperationType),
+			CurrentState: []snapshotPathState{},
+		}
+		return result, fmt.Errorf("snapshot.Revert unsupported operation type %q: %w", snapshot.OperationType, errSnapshotUnsupportedRevert)
+	}
+
+	states, err := parseSnapshotPathStates(stateJSON)
+	if err != nil {
+		result := &RevertResult{
+			OK:           false,
+			ErrorMessage: "快照路径状态格式无效，无法执行回退",
+			CurrentState: []snapshotPathState{},
+		}
+		return result, fmt.Errorf("snapshot.Revert parse snapshot state: %w", err)
 	}
 
 	// Preflight: check each target (original) path is not already occupied
@@ -225,4 +241,51 @@ func (s *SnapshotService) Revert(ctx context.Context, snapshotID string) (*Rever
 		OK:           true,
 		CurrentState: states,
 	}, nil
+}
+
+func snapshotSupportsPathRevert(operationType string) bool {
+	switch strings.ToLower(strings.TrimSpace(operationType)) {
+	case "move", "rename":
+		return true
+	default:
+		return false
+	}
+}
+
+func parseSnapshotPathStates(raw json.RawMessage) ([]snapshotPathState, error) {
+	if len(raw) == 0 {
+		return nil, fmt.Errorf("empty snapshot state")
+	}
+
+	var arrayPayload []snapshotPathState
+	if err := json.Unmarshal(raw, &arrayPayload); err == nil {
+		return normalizeSnapshotPathStates(arrayPayload)
+	}
+
+	var singlePayload snapshotPathState
+	if err := json.Unmarshal(raw, &singlePayload); err == nil {
+		return normalizeSnapshotPathStates([]snapshotPathState{singlePayload})
+	}
+
+	return nil, fmt.Errorf("unsupported snapshot state payload")
+}
+
+func normalizeSnapshotPathStates(states []snapshotPathState) ([]snapshotPathState, error) {
+	if len(states) == 0 {
+		return nil, fmt.Errorf("empty snapshot state")
+	}
+
+	normalized := make([]snapshotPathState, 0, len(states))
+	for _, state := range states {
+		trimmed := snapshotPathState{
+			OriginalPath: strings.TrimSpace(state.OriginalPath),
+			CurrentPath:  strings.TrimSpace(state.CurrentPath),
+		}
+		if trimmed.OriginalPath == "" || trimmed.CurrentPath == "" {
+			return nil, fmt.Errorf("invalid snapshot path state")
+		}
+		normalized = append(normalized, trimmed)
+	}
+
+	return normalized, nil
 }

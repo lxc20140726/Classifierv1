@@ -156,6 +156,72 @@ type branchSlowItemsExecutor struct {
 	maxActive *int32
 }
 
+type stubManifestBuilder struct {
+	ensureCalls int
+	lastRunID   string
+	lastItems   []ProcessingItem
+}
+
+func (s *stubManifestBuilder) Build(context.Context, string) error {
+	return nil
+}
+
+func (s *stubManifestBuilder) EnsureForWorkflowRun(_ context.Context, workflowRunID string, items []ProcessingItem) error {
+	s.ensureCalls++
+	s.lastRunID = workflowRunID
+	s.lastItems = append([]ProcessingItem(nil), items...)
+	return nil
+}
+
+type stubMappingBuilder struct {
+	buildCalls int
+	lastRunID  string
+}
+
+func (s *stubMappingBuilder) Build(_ context.Context, workflowRunID string) error {
+	s.buildCalls++
+	s.lastRunID = workflowRunID
+	return nil
+}
+
+type stubOutputValidator struct {
+	validateWorkflowRunCalls int
+}
+
+func (s *stubOutputValidator) ValidateWorkflowRun(context.Context, string) ([]*repository.FolderOutputCheck, error) {
+	s.validateWorkflowRunCalls++
+	return []*repository.FolderOutputCheck{}, nil
+}
+
+func (s *stubOutputValidator) ValidateFolder(context.Context, string) (*repository.FolderOutputCheck, error) {
+	return nil, nil
+}
+
+func (s *stubOutputValidator) GetLatestDetail(context.Context, string) (*FolderOutputCheckDetail, error) {
+	return nil, nil
+}
+
+func (s *stubOutputValidator) CanMarkDone(context.Context, string) (bool, error) {
+	return false, nil
+}
+
+type stubCompletionUpdater struct {
+	syncCalls        int
+	markPendingCalls int
+	lastFolderID     string
+}
+
+func (s *stubCompletionUpdater) Sync(context.Context, string, *repository.FolderOutputCheck) error {
+	s.syncCalls++
+	return nil
+}
+
+func (s *stubCompletionUpdater) MarkPending(_ context.Context, folderID string) error {
+	s.markPendingCalls++
+	s.lastFolderID = folderID
+	return nil
+}
+
 func (e *consumeInputExecutor) Type() string {
 	return "consume-input"
 }
@@ -2168,6 +2234,120 @@ func TestWorkflowRunnerServiceComplexMixedLeafFanOutWithoutMove(t *testing.T) {
 	}
 	if !foundMixedCompress {
 		t.Fatalf("missing mixed compress audit log for %q", normalizeWorkflowPath(mixedArchivePath))
+	}
+}
+
+func TestSyncFolderStatusesByWorkflowRunPartialBuildsMappingsWithoutValidation(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	database := newServiceTestDB(t)
+	jobRepo := repository.NewJobRepository(database)
+	folderRepo := repository.NewFolderRepository(database)
+	workflowDefRepo := repository.NewWorkflowDefinitionRepository(database)
+	workflowRunRepo := repository.NewWorkflowRunRepository(database)
+	nodeRunRepo := repository.NewNodeRunRepository(database)
+	nodeSnapshotRepo := repository.NewNodeSnapshotRepository(database)
+
+	folder := &repository.Folder{
+		ID:             "folder-partial-output",
+		Path:           "/source/folder-partial-output",
+		SourceDir:      "/source",
+		RelativePath:   "folder-partial-output",
+		Name:           "folder-partial-output",
+		Category:       "photo",
+		CategorySource: "manual",
+		Status:         "done",
+	}
+	if err := folderRepo.Upsert(ctx, folder); err != nil {
+		t.Fatalf("folderRepo.Upsert() error = %v", err)
+	}
+
+	job := &repository.Job{
+		ID:            "job-partial-output",
+		Type:          "workflow",
+		WorkflowDefID: "wf-partial-output",
+		Status:        "running",
+		FolderIDs:     `["folder-partial-output"]`,
+		Total:         1,
+	}
+	if err := jobRepo.Create(ctx, job); err != nil {
+		t.Fatalf("jobRepo.Create() error = %v", err)
+	}
+
+	run := &repository.WorkflowRun{
+		ID:            "run-partial-output",
+		JobID:         job.ID,
+		WorkflowDefID: job.WorkflowDefID,
+		FolderID:      folder.ID,
+		Status:        "running",
+	}
+	if err := workflowRunRepo.Create(ctx, run); err != nil {
+		t.Fatalf("workflowRunRepo.Create() error = %v", err)
+	}
+
+	if err := nodeRunRepo.Create(ctx, &repository.NodeRun{
+		ID:            "node-run-partial-output",
+		WorkflowRunID: run.ID,
+		NodeID:        "rename",
+		NodeType:      renameNodeExecutorType,
+		Sequence:      1,
+		Status:        "succeeded",
+		OutputJSON:    "{}",
+	}); err != nil {
+		t.Fatalf("nodeRunRepo.Create() error = %v", err)
+	}
+
+	svc := NewWorkflowRunnerService(
+		jobRepo,
+		folderRepo,
+		repository.NewSnapshotRepository(database),
+		workflowDefRepo,
+		workflowRunRepo,
+		nodeRunRepo,
+		nodeSnapshotRepo,
+		fs.NewMockAdapter(),
+		nil,
+		nil,
+	)
+
+	manifest := &stubManifestBuilder{}
+	mapping := &stubMappingBuilder{}
+	validator := &stubOutputValidator{}
+	completion := &stubCompletionUpdater{}
+	svc.SetSourceManifestBuilder(manifest)
+	svc.SetOutputPipeline(mapping, validator, completion)
+
+	if err := svc.syncFolderStatusesByWorkflowRun(ctx, run.ID, "partial"); err != nil {
+		t.Fatalf("syncFolderStatusesByWorkflowRun() error = %v", err)
+	}
+
+	if manifest.ensureCalls != 1 {
+		t.Fatalf("manifest ensure calls = %d, want 1", manifest.ensureCalls)
+	}
+	if manifest.lastRunID != run.ID {
+		t.Fatalf("manifest run_id = %q, want %q", manifest.lastRunID, run.ID)
+	}
+	if len(manifest.lastItems) != 1 || manifest.lastItems[0].FolderID != folder.ID {
+		t.Fatalf("manifest items = %+v, want one item with folder_id=%q", manifest.lastItems, folder.ID)
+	}
+
+	if mapping.buildCalls != 1 {
+		t.Fatalf("mapping build calls = %d, want 1", mapping.buildCalls)
+	}
+	if mapping.lastRunID != run.ID {
+		t.Fatalf("mapping run_id = %q, want %q", mapping.lastRunID, run.ID)
+	}
+
+	if validator.validateWorkflowRunCalls != 0 {
+		t.Fatalf("validator calls = %d, want 0 in partial path", validator.validateWorkflowRunCalls)
+	}
+
+	if completion.syncCalls != 0 {
+		t.Fatalf("completion sync calls = %d, want 0 in partial path", completion.syncCalls)
+	}
+	if completion.markPendingCalls != 1 || completion.lastFolderID != folder.ID {
+		t.Fatalf("completion mark_pending calls/folder = %d/%q, want 1/%q", completion.markPendingCalls, completion.lastFolderID, folder.ID)
 	}
 }
 

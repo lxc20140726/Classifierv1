@@ -469,8 +469,6 @@ func phase4MoveResolveExecutionRoot(items []ProcessingItem) (string, []Processin
 
 	rootPaths := map[string]struct{}{}
 	commonParent := ""
-	relativePathMode := ""
-	sharedRelativePath := ""
 	for _, item := range items {
 		rootPath := normalizeWorkflowPath(item.RootPath)
 		if rootPath == "" {
@@ -484,33 +482,13 @@ func phase4MoveResolveExecutionRoot(items []ProcessingItem) (string, []Processin
 		}
 		if commonParent == "" {
 			commonParent = parent
-			continue
-		}
-		if parent != commonParent {
+		} else if parent != commonParent {
 			return "", items, false
 		}
 
 		currentPath := processingItemCurrentPath(item)
 		relativePath := strings.TrimSpace(item.RelativePath)
-		switch {
-		case relativePath == "" && currentPath != "" && currentPath == rootPath:
-			if relativePathMode == "" {
-				relativePathMode = "self-root"
-				continue
-			}
-			if relativePathMode != "self-root" {
-				return "", items, false
-			}
-		case relativePath != "":
-			if relativePathMode == "" {
-				relativePathMode = "shared-relative"
-				sharedRelativePath = relativePath
-				continue
-			}
-			if relativePathMode != "shared-relative" || sharedRelativePath != relativePath {
-				return "", items, false
-			}
-		default:
+		if relativePath == "" && (currentPath == "" || currentPath != rootPath) && item.SourceKind != ProcessingItemSourceKindArchive {
 			return "", items, false
 		}
 	}
@@ -519,9 +497,6 @@ func phase4MoveResolveExecutionRoot(items []ProcessingItem) (string, []Processin
 		return "", items, false
 	}
 	if len(rootPaths) <= 1 {
-		return "", items, false
-	}
-	if relativePathMode == "" {
 		return "", items, false
 	}
 

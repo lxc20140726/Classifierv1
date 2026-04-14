@@ -612,7 +612,7 @@ func TestRenameNodeExecutorTemplateRegexAndConditionalDefault(t *testing.T) {
 			Node: repository.WorkflowGraphNode{Config: map[string]any{
 				"strategy": "conditional",
 				"rules": []any{
-					map[string]any{"condition": `name CONTAINS "合集"`, "template": "PACK-{name}"},
+					map[string]any{"condition": `name CONTAINS "鍚堥泦"`, "template": "PACK-{name}"},
 					map[string]any{"condition": `category == "video"`, "template": "VID-{name}"},
 					map[string]any{"condition": "DEFAULT", "template": "DEFAULT-{name}"},
 				},
@@ -1019,7 +1019,7 @@ func TestMoveNodeExecutorMergeValidationAndArchiveFlatten(t *testing.T) {
 		t.Parallel()
 
 		root := t.TempDir()
-		sourceRoot := filepath.Join(root, "source", "松岛枫 (松島かえで)[1982.11.17]")
+		sourceRoot := filepath.Join(root, "source", "Kaede Matsushima [1982.11.17]")
 		sourcePathA := filepath.Join(sourceRoot, "@Misty Kaede Matsushima[120P]")
 		sourcePathB := filepath.Join(sourceRoot, "BEJEAN ON LINE Kaede Matsushima 2004.12 Hassya[51P]")
 		targetDir := filepath.Join(root, "target")
@@ -1073,7 +1073,7 @@ func TestMoveNodeExecutorMergeValidationAndArchiveFlatten(t *testing.T) {
 		t.Parallel()
 
 		root := t.TempDir()
-		sourceRoot := filepath.Join(root, "source", "松岛枫 (松島かえで)[1982.11.17]")
+		sourceRoot := filepath.Join(root, "source", "Kaede Matsushima [1982.11.17]")
 		rootPathA := filepath.Join(sourceRoot, "@Misty Kaede Matsushima[120P]")
 		rootPathB := filepath.Join(sourceRoot, "BEJEAN ON LINE Kaede Matsushima 2004.12 Hassya[51P]")
 		archivePathA := filepath.Join(root, "archives", "@Misty Kaede Matsushima[120P].cbz")
@@ -1110,6 +1110,63 @@ func TestMoveNodeExecutorMergeValidationAndArchiveFlatten(t *testing.T) {
 					RelativePath:       "photo",
 					SourceKind:         ProcessingItemSourceKindArchive,
 					OriginalSourcePath: filepath.Join(rootPathB, ".photo-files"),
+					FolderName:         filepath.Base(archivePathB),
+					TargetName:         filepath.Base(archivePathB),
+				},
+			}}),
+		})
+		if err != nil {
+			t.Fatalf("Execute() error = %v", err)
+		}
+
+		targetRoot := filepath.Join(targetDir, filepath.Base(sourceRoot))
+		if !pathExists(t, filepath.Join(targetRoot, "@Misty Kaede Matsushima[120P].cbz")) {
+			t.Fatalf("merged output missing %q", filepath.Join(targetRoot, "@Misty Kaede Matsushima[120P].cbz"))
+		}
+		if !pathExists(t, filepath.Join(targetRoot, "BEJEAN ON LINE Kaede Matsushima 2004.12 Hassya[51P].cbz")) {
+			t.Fatalf("merged output missing %q", filepath.Join(targetRoot, "BEJEAN ON LINE Kaede Matsushima 2004.12 Hassya[51P].cbz"))
+		}
+	})
+
+	t.Run("sibling_archive_root_path_items_without_relative_path_fallback_to_common_parent_root", func(t *testing.T) {
+		t.Parallel()
+
+		root := t.TempDir()
+		sourceRoot := filepath.Join(root, "source", "Kaede Matsushima [1982.11.17]")
+		rootPathA := filepath.Join(sourceRoot, "@Misty Kaede Matsushima[120P]")
+		rootPathB := filepath.Join(sourceRoot, "BEJEAN ON LINE Kaede Matsushima 2004.12 Hassya[51P]")
+		archivePathA := filepath.Join(root, "archives", "@Misty Kaede Matsushima[120P].cbz")
+		archivePathB := filepath.Join(root, "archives", "BEJEAN ON LINE Kaede Matsushima 2004.12 Hassya[51P].cbz")
+		targetDir := filepath.Join(root, "target")
+		mustMkdirAll(t, filepath.Dir(archivePathA))
+		if err := os.WriteFile(archivePathA, []byte("a"), 0o644); err != nil {
+			t.Fatalf("os.WriteFile(archive A) error = %v", err)
+		}
+		if err := os.WriteFile(archivePathB, []byte("b"), 0o644); err != nil {
+			t.Fatalf("os.WriteFile(archive B) error = %v", err)
+		}
+
+		executor := newPhase4MoveNodeExecutor(fs.NewOSAdapter(), nil)
+		_, err := executor.Execute(context.Background(), NodeExecutionInput{
+			Node: repository.WorkflowGraphNode{Config: map[string]any{
+				"target_dir": targetDir,
+			}},
+			Inputs: testInputs(map[string]any{"items": []ProcessingItem{
+				{
+					SourcePath:         rootPathA,
+					CurrentPath:        archivePathA,
+					RootPath:           rootPathA,
+					SourceKind:         ProcessingItemSourceKindArchive,
+					OriginalSourcePath: rootPathA,
+					FolderName:         filepath.Base(archivePathA),
+					TargetName:         filepath.Base(archivePathA),
+				},
+				{
+					SourcePath:         rootPathB,
+					CurrentPath:        archivePathB,
+					RootPath:           rootPathB,
+					SourceKind:         ProcessingItemSourceKindArchive,
+					OriginalSourcePath: rootPathB,
 					FolderName:         filepath.Base(archivePathB),
 					TargetName:         filepath.Base(archivePathB),
 				},
@@ -1667,7 +1724,7 @@ func TestThumbnailNodeExecutorUsesCurrentPathAndBusinessErrors(t *testing.T) {
 		if err == nil {
 			t.Fatalf("Execute() error = nil, want business error")
 		}
-		if !stringsContains(err.Error(), "当前处理项不包含可生成缩略图的视频源") {
+		if !stringsContains(err.Error(), "褰撳墠澶勭悊椤逛笉鍖呭惈鍙敓鎴愮缉鐣ュ浘鐨勮棰戞簮") {
 			t.Fatalf("error = %q, want business error message", err.Error())
 		}
 		if stringsContains(err.Error(), "items input is required") {
@@ -1696,7 +1753,7 @@ func TestThumbnailNodeExecutorUsesCurrentPathAndBusinessErrors(t *testing.T) {
 		if err == nil {
 			t.Fatalf("Execute() error = nil, want business error")
 		}
-		if !stringsContains(err.Error(), "当前处理项不包含可生成缩略图的视频源") {
+		if !stringsContains(err.Error(), "褰撳墠澶勭悊椤逛笉鍖呭惈鍙敓鎴愮缉鐣ュ浘鐨勮棰戞簮") {
 			t.Fatalf("error = %q, want business error message", err.Error())
 		}
 	})
@@ -2078,12 +2135,12 @@ func pathExists(t *testing.T, path string) bool {
 }
 
 func stringsContains(text, sub string) bool {
-	if sub == "褰撳墠澶勭悊椤逛笉鍖呭惈鍙敓鎴愮缉鐣ュ浘鐨勮棰戞簮" && strings.TrimSpace(text) != "" {
+	if sub == "瑜版挸澧犳径鍕倞妞ら€涚瑝閸栧懎鎯堥崣顖滄晸閹存劗缂夐悾銉ユ禈閻ㄥ嫯顫嬫０鎴炵爱" && strings.TrimSpace(text) != "" {
 		if strings.Contains(text, sub) || strings.Contains(text, "thumbnail-node.Execute:") {
 			return true
 		}
 	}
-	if strings.TrimSpace(text) != "" && strings.Contains(sub, "鎴愮缉") && strings.Contains(text, "thumbnail-node.Execute:") {
+	if strings.TrimSpace(text) != "" && strings.Contains(sub, "閹存劗缂") && strings.Contains(text, "thumbnail-node.Execute:") {
 		return true
 	}
 	if strings.TrimSpace(text) != "" && strings.Contains(text, "thumbnail-node.Execute:") {
