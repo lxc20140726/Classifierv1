@@ -16,6 +16,8 @@ test('folder page opens snapshot drawer and reverts a committed snapshot', async
     status: 'pending',
     image_count: 12,
     video_count: 0,
+    other_file_count: 0,
+    has_other_files: false,
     total_files: 12,
     total_size: 1200,
     marked_for_move: false,
@@ -23,6 +25,10 @@ test('folder page opens snapshot drawer and reverts a committed snapshot', async
     delete_staging_path: null,
     scanned_at: '2026-03-24T00:00:00Z',
     updated_at: '2026-03-24T00:00:00Z',
+    workflow_summary: {
+      classification: { status: 'not_run' },
+      processing: { status: 'not_run' },
+    },
   }
 
   let snapshots = [
@@ -30,7 +36,7 @@ test('folder page opens snapshot drawer and reverts a committed snapshot', async
       id: 'snap-1',
       job_id: 'job-1',
       folder_id: 'folder-1',
-      operation_type: 'classify',
+      operation_type: 'move',
       before: [{ original_path: '/source/album', current_path: '/source/album' }],
       after: [{ original_path: '/source/album', current_path: '/target/photo/album' }],
       detail: { category: 'photo', source_path: '/source/album' },
@@ -42,6 +48,10 @@ test('folder page opens snapshot drawer and reverts a committed snapshot', async
   await page.route('**/api/**', async (route) => {
     const path = pathname(route)
     const reqMethod = method(route)
+    if (!path.startsWith('/api/')) {
+      await route.continue()
+      return
+    }
 
     if (path === '/api/folders' && reqMethod === 'GET') {
       await route.fulfill(json({ data: [folder], total: 1, page: 1, limit: 20 }))
@@ -72,7 +82,7 @@ test('folder page opens snapshot drawer and reverts a committed snapshot', async
   await expect(page.getByRole('heading', { name: '媒体文件夹' })).toBeVisible()
   await page.getByTitle('查看快照时间线').click()
   await expect(page.getByRole('heading', { name: '文件夹操作时间线' })).toBeVisible()
-  await expect(page.getByText('分类记录')).toBeVisible()
+  await expect(page.getByText('移动')).toBeVisible()
   await page.getByRole('button', { name: '回退到此节点' }).click()
   await expect(page.getByText('已回退')).toBeVisible()
 })

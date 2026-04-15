@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
-import { cp, mkdir, rm, stat } from 'node:fs/promises'
+import { copyFile, cp, mkdir, readdir, rm, stat } from 'node:fs/promises'
 import net from 'node:net'
+import { homedir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -16,6 +17,8 @@ const repoRoot = path.resolve(frontendDir, '..')
 const backendDir = path.join(repoRoot, 'backend')
 const frontendDistDir = path.join(frontendDir, 'dist')
 const embeddedDistDir = path.join(backendDir, 'cmd/server/web/dist')
+const defaultWorkflowSeedConfigDir = path.join(repoRoot, '.e2e-fullstack', 'config')
+const homeWorkflowSeedConfigDir = path.join(homedir(), '.classifier', 'config')
 
 let prepareFrontendPromise: Promise<void> | null = null
 
@@ -100,6 +103,64 @@ async function waitForHealth(baseURL: string, timeoutMs = 45000) {
   throw new Error(`等待后端健康检查超时: ${baseURL}/health`)
 }
 
+async function resolveWorkflowSeedConfigDir(): Promise<string | null> {
+  const raw = process.env.E2E_WORKFLOW_CONFIG_DIR?.trim()
+  if (raw != null) {
+    if (raw === '' || raw.toLowerCase() === 'none') {
+      return null
+    }
+    const explicit = path.isAbsolute(raw) ? raw : path.resolve(repoRoot, raw)
+    try {
+      await stat(path.join(explicit, 'classifier.db'))
+      return explicit
+    } catch (error) {
+      const nodeError = error as NodeJS.ErrnoException
+      if (nodeError.code === 'ENOENT') {
+        return null
+      }
+      throw error
+    }
+  }
+
+  for (const candidate of [defaultWorkflowSeedConfigDir, homeWorkflowSeedConfigDir]) {
+    try {
+      await stat(path.join(candidate, 'classifier.db'))
+      return candidate
+    } catch (error) {
+      const nodeError = error as NodeJS.ErrnoException
+      if (nodeError.code === 'ENOENT') {
+        continue
+      }
+      throw error
+    }
+  }
+
+  return null
+}
+
+async function seedWorkflowConfig(configDir: string) {
+  const seedDir = await resolveWorkflowSeedConfigDir()
+  if (seedDir == null) {
+    return
+  }
+
+  let entries: Awaited<ReturnType<typeof readdir>>
+  try {
+    entries = await readdir(seedDir, { withFileTypes: true })
+  } catch (error) {
+    const nodeError = error as NodeJS.ErrnoException
+    if (nodeError.code === 'ENOENT') {
+      return
+    }
+    throw error
+  }
+
+  const dbFiles = entries.filter((entry) => entry.isFile() && entry.name.startsWith('classifier.db'))
+  for (const file of dbFiles) {
+    await copyFile(path.join(seedDir, file.name), path.join(configDir, file.name))
+  }
+}
+
 function createState(): ScenarioState {
   return {
     folderIDsByName: {},
@@ -154,6 +215,7 @@ export async function runFullstackScenario(args: {
   )
 
   const paths = await prepareRuntimePaths(runtimeRoot)
+  await seedWorkflowConfig(paths.configDir)
   await materializeTemplate(args.scenario.directoryTemplate, paths)
   if (process.env.E2E_PRINT_TREE === '1') {
     await printRuntimeTree(paths.sourceDir, `scenario=${args.scenario.id} source`)

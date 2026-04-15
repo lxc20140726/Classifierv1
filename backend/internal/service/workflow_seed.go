@@ -192,7 +192,7 @@ func SeedDefaultProcessingWorkflow(ctx context.Context, repo repository.Workflow
 		Nodes: []repository.WorkflowGraphNode{
 			{
 				ID:      "p-reader",
-				Type:    "classification-reader",
+				Type:    "db-subtree-reader",
 				Config:  map[string]any{},
 				Inputs:  map[string]repository.NodeInputSpec{},
 				Enabled: true,
@@ -296,7 +296,7 @@ func SeedGenericProcessingWorkflow(ctx context.Context, repo repository.Workflow
 		Nodes: []repository.WorkflowGraphNode{
 			{
 				ID:      "g-reader",
-				Type:    "classification-reader",
+				Type:    "db-subtree-reader",
 				Config:  map[string]any{},
 				Inputs:  map[string]repository.NodeInputSpec{},
 				Enabled: true,

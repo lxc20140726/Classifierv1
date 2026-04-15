@@ -24,3 +24,10 @@ npm run e2e:docker
 ```
 
 `E2E_TAGS` 支持多个值，逗号分隔，例如：`E2E_TAGS=smoke,process`
+
+## 工作流配置来源
+
+- fullstack 用例会为每个场景创建独立运行目录（含独立 `config`）。
+- 运行前会尝试从 `../.e2e-fullstack/config`（其次 `~/.classifier/config`）复制 `classifier.db*` 到场景 `config`，用于复用你已配置的真实工作流（如“分类/处理”）。
+- 可用 `E2E_WORKFLOW_CONFIG_DIR=/abs/path/to/config` 显式指定来源目录。
+- 可用 `E2E_WORKFLOW_CONFIG_DIR=none` 禁用复制，完全使用空配置启动。

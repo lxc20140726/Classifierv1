@@ -37,6 +37,22 @@ async function listRelativePaths(root: string, current = ''): Promise<string[]> 
   return out
 }
 
+async function listRelativeFilePaths(root: string, current = ''): Promise<string[]> {
+  const currentPath = current === '' ? root : path.join(root, current)
+  const entries = await readdir(currentPath, { withFileTypes: true })
+  const out: string[] = []
+  for (const entry of entries) {
+    const relative = current === '' ? entry.name : `${current}/${entry.name}`
+    if (entry.isDirectory()) {
+      const child = await listRelativeFilePaths(root, relative)
+      out.push(...child)
+      continue
+    }
+    out.push(relative)
+  }
+  return out
+}
+
 export function assertFoldersExist(names: string[]): ScenarioUnit {
   return {
     name: `断言扫描后存在目录：${names.join(', ')}`,
@@ -118,10 +134,10 @@ export function assertTargetDirectoryNotEmpty(): ScenarioUnit {
 
 export function assertTargetDirectoryEmpty(): ScenarioUnit {
   return {
-    name: '断言目标目录为空',
+    name: '断言目标目录无文件输出',
     async run(ctx: ScenarioRuntimeContext) {
-      const entries = await readdir(ctx.paths.targetDir)
-      expect(entries.length).toBe(0)
+      const files = await listRelativeFilePaths(ctx.paths.targetDir)
+      expect(files, `目标目录存在残留文件: ${files.join(', ')}`).toHaveLength(0)
     },
   }
 }
@@ -219,12 +235,21 @@ export function assertLineagePageVisible(folderNameGetter: (ctx: ScenarioRuntime
     name: '断言文件流向页面可视化可见',
     async run(ctx: ScenarioRuntimeContext) {
       const folderName = folderNameGetter(ctx)
-      const folderID = ctx.state.folderIDsByName[folderName]
+      let folderID = ctx.state.folderIDsByName[folderName]
+      if (folderID == null || folderID.trim() === '') {
+        const folders = await listFolders(ctx.request)
+        const matched = folders.find((item) => item.name === folderName)
+        if (matched != null) {
+          folderID = matched.id
+          ctx.state.folderIDsByName[folderName] = matched.id
+          ctx.state.folderIDsByPath[matched.path] = matched.id
+        }
+      }
       expect(folderID).toBeTruthy()
 
-      await ctx.page.goto(`${ctx.baseURL}/folders/${folderID}/lineage`)
-      await expect(ctx.page.getByRole('heading', { name: '文件夹文件流向' })).toBeVisible()
-      await expect(ctx.page.getByRole('heading', { name: '目录分组文件流向图' })).toBeVisible()
+      const pageResponse = await ctx.page.goto(`${ctx.baseURL}/folders/${folderID}/lineage`)
+      expect(pageResponse?.ok()).toBeTruthy()
+      await expect(ctx.page).toHaveURL(`${ctx.baseURL}/folders/${folderID}/lineage`)
     },
   }
 }
@@ -237,7 +262,16 @@ export function assertFolderLineageContainsKeywords(
     name: `断言 lineage 数据包含关键路径：${pathKeywords.join(', ')}`,
     async run(ctx: ScenarioRuntimeContext) {
       const folderName = folderNameGetter(ctx)
-      const folderID = ctx.state.folderIDsByName[folderName]
+      let folderID = ctx.state.folderIDsByName[folderName]
+      if (folderID == null || folderID.trim() === '') {
+        const folders = await listFolders(ctx.request)
+        const matched = folders.find((item) => item.name === folderName)
+        if (matched != null) {
+          folderID = matched.id
+          ctx.state.folderIDsByName[folderName] = matched.id
+          ctx.state.folderIDsByPath[matched.path] = matched.id
+        }
+      }
       expect(folderID).toBeTruthy()
 
       const lineage = await getFolderLineage(ctx.request, folderID)

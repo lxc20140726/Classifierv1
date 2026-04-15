@@ -128,6 +128,9 @@ const NODE_STATUS_STYLES: Record<NodeRunStatus, string> = {
   waiting_input: 'bg-purple-300 text-purple-900 border-2 border-foreground',
 }
 
+const JOB_HISTORY_PAGE_SIZE = 20
+const WORKFLOW_RUN_PAGE_SIZE = 20
+
 function StatusBadge({ status, labels, styles }: {
   status: string
   labels: Record<string, string>
@@ -165,6 +168,49 @@ function ProgressBar({ done, total }: { done: number; total: number }) {
         <div className={cn('h-full bg-foreground transition-all duration-300', progressClassName)} />
       </div>
       <span className="min-w-[3rem] text-right text-xs font-black tabular-nums">{done}/{total}</span>
+    </div>
+  )
+}
+
+function PaginationControls({
+  page,
+  totalPages,
+  total,
+  rowCount,
+  isLoading,
+  onPageChange,
+}: {
+  page: number
+  totalPages: number
+  total: number
+  rowCount: number
+  isLoading: boolean
+  onPageChange: (nextPage: number) => void
+}) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded border-2 border-foreground bg-muted/20 px-4 py-3">
+      <p className="text-sm font-bold text-muted-foreground">
+        第 <span className="font-black text-foreground">{page}</span> / {totalPages} 页，共{' '}
+        <span className="font-black text-foreground">{total}</span> 条（当前 {rowCount} 条）
+      </p>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          disabled={page <= 1 || isLoading}
+          onClick={() => onPageChange(Math.max(1, page - 1))}
+          className="border-2 border-foreground bg-background px-3 py-1 text-xs font-bold hover:bg-foreground hover:text-background disabled:opacity-50"
+        >
+          上一页
+        </button>
+        <button
+          type="button"
+          disabled={page >= totalPages || isLoading}
+          onClick={() => onPageChange(Math.min(totalPages, page + 1))}
+          className="border-2 border-foreground bg-background px-3 py-1 text-xs font-bold hover:bg-foreground hover:text-background disabled:opacity-50"
+        >
+          下一页
+        </button>
+      </div>
     </div>
   )
 }
@@ -266,10 +312,12 @@ function WorkflowRunRow({
   run,
   forceExpanded,
   highlightFailedNodes,
+  onRefreshRuns,
 }: {
   run: WorkflowRun
   forceExpanded?: boolean
   highlightFailedNodes?: boolean
+  onRefreshRuns: () => Promise<void>
 }) {
   const [expanded, setExpanded] = useState(false)
   const [isActing, setIsActing] = useState(false)
@@ -277,7 +325,6 @@ function WorkflowRunRow({
   const {
     rollbackRun,
     fetchRunDetail,
-    fetchRunsForJob,
     fetchRunReviews,
     approveReview,
     rollbackReview,
@@ -301,7 +348,7 @@ function WorkflowRunRow({
     setIsActing(true)
     try {
       await rollbackRun(run.id)
-      await fetchRunsForJob(run.job_id)
+      await onRefreshRuns()
       pushNotification({
         level: 'success',
         title: '回滚完成',
@@ -320,7 +367,7 @@ function WorkflowRunRow({
     setIsActing(true)
     try {
       await approveReview(run.id, reviewId)
-      await fetchRunsForJob(run.job_id)
+      await onRefreshRuns()
       pushNotification({
         level: 'success',
         title: '确认已通过',
@@ -344,7 +391,7 @@ function WorkflowRunRow({
     setIsActing(true)
     try {
       await rollbackReview(run.id, reviewId)
-      await fetchRunsForJob(run.job_id)
+      await onRefreshRuns()
       pushNotification({
         level: 'success',
         title: '已回退确认项',
@@ -368,7 +415,7 @@ function WorkflowRunRow({
     setIsActing(true)
     try {
       const approved = await approveAllPendingReviews(run.id)
-      await fetchRunsForJob(run.job_id)
+      await onRefreshRuns()
       pushNotification({
         level: 'success',
         title: '批量通过完成',
@@ -392,7 +439,7 @@ function WorkflowRunRow({
     setIsActing(true)
     try {
       const rolledBack = await rollbackAllPendingReviews(run.id)
-      await fetchRunsForJob(run.job_id)
+      await onRefreshRuns()
       pushNotification({
         level: 'success',
         title: '批量回退完成',
@@ -562,12 +609,23 @@ function WorkflowRunRow({
 }
 
 function WorkflowRunsPanel({ job, targetWorkflowRunId }: { job: Job; targetWorkflowRunId?: string }) {
-  const { runsByJobId, fetchRunsForJob } = useWorkflowRunStore()
+  const {
+    runsByJobId,
+    runsTotalByJobId,
+    runsPageByJobId,
+    fetchRunsForJob,
+    fetchingJobIds,
+  } = useWorkflowRunStore()
+  const [page, setPage] = useState(1)
   const runs = runsByJobId[job.id] ?? []
+  const total = runsTotalByJobId[job.id] ?? 0
+  const currentPage = runsPageByJobId[job.id] ?? page
+  const isLoading = fetchingJobIds.has(job.id)
+  const totalPages = Math.max(1, Math.ceil(total / WORKFLOW_RUN_PAGE_SIZE))
 
   useEffect(() => {
-    void fetchRunsForJob(job.id)
-  }, [job.id, fetchRunsForJob])
+    void fetchRunsForJob(job.id, { page, limit: WORKFLOW_RUN_PAGE_SIZE })
+  }, [fetchRunsForJob, job.id, page])
 
   return (
     <div className="space-y-3">
@@ -604,6 +662,7 @@ function WorkflowRunsPanel({ job, targetWorkflowRunId }: { job: Job; targetWorkf
                 <WorkflowRunRow
                   key={run.id}
                   run={run}
+                  onRefreshRuns={() => fetchRunsForJob(job.id, { page, limit: WORKFLOW_RUN_PAGE_SIZE })}
                   forceExpanded={targetWorkflowRunId !== '' && run.id === targetWorkflowRunId}
                   highlightFailedNodes={targetWorkflowRunId !== '' && run.id === targetWorkflowRunId}
                 />
@@ -611,6 +670,16 @@ function WorkflowRunsPanel({ job, targetWorkflowRunId }: { job: Job; targetWorkf
             </tbody>
           </table>
         </div>
+      )}
+      {total > 0 && (
+        <PaginationControls
+          page={currentPage}
+          totalPages={totalPages}
+          total={total}
+          rowCount={runs.length}
+          isLoading={isLoading}
+          onPageChange={setPage}
+        />
       )}
     </div>
   )
@@ -681,13 +750,19 @@ export default function JobHistoryPage() {
   const { defs, fetchDefs } = useWorkflowDefStore()
   const runsByJobId = useWorkflowRunStore((state) => state.runsByJobId)
   const [searchParams] = useSearchParams()
+  const [page, setPage] = useState(1)
 
   const targetJobId = readTargetParam(searchParams.get('job_id'))
   const targetWorkflowRunId = readTargetParam(searchParams.get('workflow_run_id'))
+  const totalPages = Math.max(1, Math.ceil(total / JOB_HISTORY_PAGE_SIZE))
 
   useEffect(() => {
-    void fetchJobs(targetJobId ? { page: 1, limit: 100 } : undefined)
-  }, [fetchJobs, targetJobId])
+    if (targetJobId) {
+      void fetchJobs({ page: 1, limit: 100 })
+      return
+    }
+    void fetchJobs({ page, limit: JOB_HISTORY_PAGE_SIZE })
+  }, [fetchJobs, page, targetJobId])
 
   useEffect(() => {
     void fetchDefs()
@@ -775,6 +850,16 @@ export default function JobHistoryPage() {
             </tbody>
           </table>
         </div>
+        {!targetJobId && total > 0 && (
+          <PaginationControls
+            page={page}
+            totalPages={totalPages}
+            total={total}
+            rowCount={jobs.length}
+            isLoading={isLoading}
+            onPageChange={setPage}
+          />
+        )}
       </div>
     </div>
   )

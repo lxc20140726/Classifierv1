@@ -71,10 +71,12 @@ test('workflow definition CRUD works end-to-end in UI', async ({ page }) => {
 
   await page.goto('/workflow-defs')
 
-  await expect(page.getByRole('heading', { name: '工作流定义' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '工作流管理' })).toBeVisible()
   await expect(page.getByText('默认分类流程')).toBeVisible()
 
   await page.getByRole('button', { name: '新建' }).click()
+  await expect(page.getByRole('heading', { name: '选择模板' })).toBeVisible()
+  await page.getByRole('button', { name: '空白' }).click()
   await page.getByPlaceholder('工作流名称').fill('新建流程')
   await page.locator('textarea').fill('{"nodes":[{"id":"n1","type":"trigger"}],"edges":[]}')
   await page.getByRole('button', { name: '保存' }).click()

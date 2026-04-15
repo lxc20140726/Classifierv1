@@ -193,7 +193,21 @@ func dbSubtreeBuildEntry(folders []*repository.Folder, rootPath string) (Classif
 
 	rootEntry, ok := pathToEntry[trimmedRoot]
 	if !ok {
-		return ClassifiedEntry{}, false
+		syntheticRoot := &ClassifiedEntry{
+			Path:       trimmedRoot,
+			Name:       filepath.Base(trimmedRoot),
+			Category:   "mixed",
+			Confidence: 1,
+			Reason:     "db:synthetic-root",
+			Classifier: dbSubtreeReaderExecutorType,
+			Files:      []FileEntry{},
+			Subtree:    []ClassifiedEntry{},
+		}
+		if syntheticRoot.Name == "" || syntheticRoot.Name == "." || syntheticRoot.Name == "/" {
+			syntheticRoot.Name = trimmedRoot
+		}
+		pathToEntry[trimmedRoot] = syntheticRoot
+		rootEntry = syntheticRoot
 	}
 
 	childrenByParent := make(map[string][]*ClassifiedEntry, len(pathToEntry))

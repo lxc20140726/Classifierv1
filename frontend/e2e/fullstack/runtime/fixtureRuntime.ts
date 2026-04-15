@@ -58,12 +58,12 @@ async function createMediaFixtures(dir: string): Promise<RuntimeSamplePaths> {
   }
 
   try {
-    await run('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'testsrc=size=64x64:rate=1:duration=1', '-pix_fmt', 'yuv420p', mp4], dir)
+    await run('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'testsrc=size=64x64:rate=1:duration=12', '-pix_fmt', 'yuv420p', mp4], dir)
   } catch {
     await writeFile(mp4, 'dummy-mp4')
   }
   try {
-    await run('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'testsrc=size=64x64:rate=1:duration=1', mkv], dir)
+    await run('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'testsrc=size=64x64:rate=1:duration=12', mkv], dir)
   } catch {
     await writeFile(mkv, 'dummy-mkv')
   }

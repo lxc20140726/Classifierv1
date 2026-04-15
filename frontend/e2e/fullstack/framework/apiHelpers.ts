@@ -65,6 +65,15 @@ export async function saveRuntimeConfig(
   const response = await request.put('/api/config', {
     data: {
       scan_input_dirs: payload.scanInputDirs,
+      output_dirs: {
+        video: [payload.targetDir],
+        manga: [payload.targetDir],
+        photo: [payload.targetDir],
+        other: [payload.targetDir],
+        mixed: [payload.targetDir],
+      },
+      source_dir: payload.sourceDir,
+      target_dir: payload.targetDir,
     },
   })
   expect(response.ok()).toBeTruthy()
@@ -76,20 +85,36 @@ export async function triggerScan(request: APIRequestContext) {
 }
 
 export async function listFolders(request: APIRequestContext): Promise<FolderDTO[]> {
-  const response = await request.get('/api/folders?limit=300')
-  expect(response.ok()).toBeTruthy()
-  const body = (await response.json()) as { data?: unknown[] }
-  const data = Array.isArray(body.data) ? body.data : []
-  return data.map((item) => {
-    const row = item as Record<string, unknown>
-    return {
-      id: str(row.id ?? row.ID),
-      name: str(row.name ?? row.Name),
-      category: str(row.category ?? row.Category),
-      status: str(row.status ?? row.Status),
-      path: str(row.path ?? row.Path),
+  const pageSize = 300
+  const folders: FolderDTO[] = []
+  let page = 1
+  let total = 0
+
+  while (true) {
+    const response = await request.get(`/api/folders?page=${page}&limit=${pageSize}`)
+    expect(response.ok()).toBeTruthy()
+    const body = (await response.json()) as { data?: unknown[]; total?: unknown }
+    const data = Array.isArray(body.data) ? body.data : []
+    total = num(body.total)
+
+    for (const item of data) {
+      const row = item as Record<string, unknown>
+      folders.push({
+        id: str(row.id ?? row.ID),
+        name: str(row.name ?? row.Name),
+        category: str(row.category ?? row.Category),
+        status: str(row.status ?? row.Status),
+        path: str(row.path ?? row.Path),
+      })
     }
-  })
+
+    if (data.length === 0 || (total > 0 && folders.length >= total)) {
+      break
+    }
+    page += 1
+  }
+
+  return folders
 }
 
 export async function getFolderDetail(request: APIRequestContext, folderID: string): Promise<FolderDTO> {
@@ -107,21 +132,37 @@ export async function getFolderDetail(request: APIRequestContext, folderID: stri
 }
 
 export async function listWorkflowDefs(request: APIRequestContext): Promise<WorkflowDefDTO[]> {
-  const response = await request.get('/api/workflow-defs?limit=200')
-  expect(response.ok()).toBeTruthy()
-  const body = (await response.json()) as { data?: unknown[] }
-  const data = Array.isArray(body.data) ? body.data : []
-  return data.map((item) => {
-    const row = item as Record<string, unknown>
-    return {
-      id: str(row.id ?? row.ID),
-      name: str(row.name ?? row.Name),
-      description: str(row.description ?? row.Description),
-      graphJSON: str(row.graph_json ?? row.GraphJSON),
-      isActive: bool(row.is_active ?? row.IsActive),
-      version: num(row.version ?? row.Version),
+  const pageSize = 100
+  const defs: WorkflowDefDTO[] = []
+  let page = 1
+  let total = 0
+
+  while (true) {
+    const response = await request.get(`/api/workflow-defs?page=${page}&limit=${pageSize}`)
+    expect(response.ok()).toBeTruthy()
+    const body = (await response.json()) as { data?: unknown[]; total?: unknown }
+    const data = Array.isArray(body.data) ? body.data : []
+    total = num(body.total)
+
+    for (const item of data) {
+      const row = item as Record<string, unknown>
+      defs.push({
+        id: str(row.id ?? row.ID),
+        name: str(row.name ?? row.Name),
+        description: str(row.description ?? row.Description),
+        graphJSON: str(row.graph_json ?? row.GraphJSON),
+        isActive: bool(row.is_active ?? row.IsActive),
+        version: num(row.version ?? row.Version),
+      })
     }
-  })
+
+    if (data.length === 0 || (total > 0 && defs.length >= total)) {
+      break
+    }
+    page += 1
+  }
+
+  return defs
 }
 
 export async function findWorkflowDefByName(request: APIRequestContext, name: string): Promise<WorkflowDefDTO | null> {
@@ -177,9 +218,13 @@ export async function upsertWorkflowDef(
 export async function startWorkflowJob(
   request: APIRequestContext,
   workflowDefID: string,
+  sourceDir?: string,
 ): Promise<string> {
   const response = await request.post('/api/jobs', {
-    data: { workflow_def_id: workflowDefID },
+    data: {
+      workflow_def_id: workflowDefID,
+      ...(sourceDir != null && sourceDir.trim() !== '' ? { source_dir: sourceDir } : {}),
+    },
   })
   expect(response.ok()).toBeTruthy()
   const body = (await response.json()) as { job_id?: string }

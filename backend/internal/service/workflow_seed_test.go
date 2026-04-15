@@ -134,7 +134,7 @@ func TestSeedDefaultProcessingWorkflow_CreatesExpectedGraphAndIsIdempotent(t *te
 		gotTypes = append(gotTypes, node.Type)
 	}
 	wantTypes := []string{
-		"classification-reader",
+		"db-subtree-reader",
 		"folder-splitter",
 		"category-router",
 		"rename-node",
@@ -275,7 +275,7 @@ func TestSeedGenericProcessingWorkflow_CreatesExpectedGraphAndIsIdempotent(t *te
 		gotTypes = append(gotTypes, node.Type)
 	}
 	wantTypes := []string{
-		"classification-reader",
+		"db-subtree-reader",
 		"folder-splitter",
 		"category-router",
 		"rename-node",

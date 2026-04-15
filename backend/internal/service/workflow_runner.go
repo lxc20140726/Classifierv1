@@ -1667,14 +1667,18 @@ func (s *WorkflowRunnerService) resolveNodeInputs(
 	}
 
 	if strings.TrimSpace(sourceDir) != "" {
-		if existing, exists := inputs["source_dir"]; exists && existing != nil {
-			if text, ok := existing.Value.(string); ok && strings.TrimSpace(text) == "" {
-				inputs["source_dir"] = nil
+		for _, portName := range []string{"source_dir", "path"} {
+			if existing, exists := inputs[portName]; exists && existing != nil {
+				if existing.Value == nil {
+					inputs[portName] = nil
+				} else if text, ok := existing.Value.(string); ok && strings.TrimSpace(text) == "" {
+					inputs[portName] = nil
+				}
 			}
-		}
-		if _, exists := inputs["source_dir"]; exists && inputs["source_dir"] == nil {
-			inputs["source_dir"] = &TypedValue{Type: PortTypePath, Value: sourceDir}
-			inputSources["source_dir"] = InputValueSourceResolved
+			if _, exists := inputs[portName]; exists && inputs[portName] == nil {
+				inputs[portName] = &TypedValue{Type: inferPortTypeForInput(schema, portName), Value: sourceDir}
+				inputSources[portName] = InputValueSourceResolved
+			}
 		}
 	}
 
@@ -2570,15 +2574,35 @@ func topologicalNodes(graph *repository.WorkflowGraph) ([]repository.WorkflowGra
 	}
 
 	adj := make(map[string][]string, len(graph.Nodes))
+	adjSeen := make(map[string]map[string]struct{}, len(graph.Nodes))
+	addEdge := func(sourceID, targetID string) {
+		if _, ok := nodeMap[sourceID]; !ok {
+			return
+		}
+		if _, ok := nodeMap[targetID]; !ok {
+			return
+		}
+		if _, ok := adjSeen[sourceID]; !ok {
+			adjSeen[sourceID] = make(map[string]struct{})
+		}
+		if _, ok := adjSeen[sourceID][targetID]; ok {
+			return
+		}
+		adjSeen[sourceID][targetID] = struct{}{}
+		adj[sourceID] = append(adj[sourceID], targetID)
+		indegree[targetID]++
+	}
+
 	for _, edge := range graph.Edges {
-		if _, ok := nodeMap[edge.Source]; !ok {
-			continue
+		addEdge(edge.Source, edge.Target)
+	}
+	for _, node := range graph.Nodes {
+		for _, spec := range node.Inputs {
+			if spec.LinkSource == nil {
+				continue
+			}
+			addEdge(strings.TrimSpace(spec.LinkSource.SourceNodeID), node.ID)
 		}
-		if _, ok := nodeMap[edge.Target]; !ok {
-			continue
-		}
-		adj[edge.Source] = append(adj[edge.Source], edge.Target)
-		indegree[edge.Target]++
 	}
 
 	queue := make([]string, 0)
@@ -2626,15 +2650,35 @@ func topologicalLevels(graph *repository.WorkflowGraph) ([][]repository.Workflow
 	}
 
 	adj := make(map[string][]string, len(graph.Nodes))
+	adjSeen := make(map[string]map[string]struct{}, len(graph.Nodes))
+	addEdge := func(sourceID, targetID string) {
+		if _, ok := nodeMap[sourceID]; !ok {
+			return
+		}
+		if _, ok := nodeMap[targetID]; !ok {
+			return
+		}
+		if _, ok := adjSeen[sourceID]; !ok {
+			adjSeen[sourceID] = make(map[string]struct{})
+		}
+		if _, ok := adjSeen[sourceID][targetID]; ok {
+			return
+		}
+		adjSeen[sourceID][targetID] = struct{}{}
+		adj[sourceID] = append(adj[sourceID], targetID)
+		indegree[targetID]++
+	}
+
 	for _, edge := range graph.Edges {
-		if _, ok := nodeMap[edge.Source]; !ok {
-			continue
+		addEdge(edge.Source, edge.Target)
+	}
+	for _, node := range graph.Nodes {
+		for _, spec := range node.Inputs {
+			if spec.LinkSource == nil {
+				continue
+			}
+			addEdge(strings.TrimSpace(spec.LinkSource.SourceNodeID), node.ID)
 		}
-		if _, ok := nodeMap[edge.Target]; !ok {
-			continue
-		}
-		adj[edge.Source] = append(adj[edge.Source], edge.Target)
-		indegree[edge.Target]++
 	}
 
 	queue := make([]string, 0, len(order))

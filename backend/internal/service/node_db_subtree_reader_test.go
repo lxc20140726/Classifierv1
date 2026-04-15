@@ -114,3 +114,27 @@ func TestDBSubtreeReaderPopulateFilesPreservesMixedRootMediaForSplitter(t *testi
 		t.Fatalf("split items missing mixed root path %q", rootPath)
 	}
 }
+
+func TestDBSubtreeBuildEntryCreatesSyntheticRootWhenMissingInDB(t *testing.T) {
+	t.Parallel()
+
+	root := "/scan-root"
+	items := []*repository.Folder{
+		{ID: "f-video", Path: "/scan-root/video-leaf", Name: "video-leaf", Category: "video"},
+		{ID: "f-photo", Path: "/scan-root/photo-leaf", Name: "photo-leaf", Category: "photo"},
+	}
+
+	entry, ok := dbSubtreeBuildEntry(items, root)
+	if !ok {
+		t.Fatalf("dbSubtreeBuildEntry() ok = false, want true")
+	}
+	if entry.Path != root {
+		t.Fatalf("entry.Path = %q, want %q", entry.Path, root)
+	}
+	if entry.Classifier != dbSubtreeReaderExecutorType {
+		t.Fatalf("entry.Classifier = %q, want %q", entry.Classifier, dbSubtreeReaderExecutorType)
+	}
+	if len(entry.Subtree) != 2 {
+		t.Fatalf("len(entry.Subtree) = %d, want 2", len(entry.Subtree))
+	}
+}

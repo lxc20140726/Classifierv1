@@ -18,6 +18,7 @@ import type {
   NodeRun,
   NodeRunStatus,
   NodeType,
+  PaginatedResponse,
   ProcessingReviewItem,
   ProcessingReviewSummary,
   ProvideInputBody,
@@ -50,6 +51,9 @@ export interface WorkflowRunCardView {
 
 interface WorkflowRunStore {
   runsByJobId: Record<string, WorkflowRun[]>
+  runsTotalByJobId: Record<string, number>
+  runsPageByJobId: Record<string, number>
+  runsLimitByJobId: Record<string, number>
   runsById: Record<string, WorkflowRun>
   nodesByRunId: Record<string, NodeRun[]>
   reviewsByRunId: Record<string, ProcessingReviewItem[]>
@@ -57,7 +61,7 @@ interface WorkflowRunStore {
   recentLaunchByScope: Record<string, RecentLaunchRecord>
   fetchingJobIds: Set<string>
   fetchingRunIds: Set<string>
-  fetchRunsForJob: (jobId: string) => Promise<void>
+  fetchRunsForJob: (jobId: string, params?: { page?: number; limit?: number }) => Promise<void>
   fetchRunDetail: (runId: string) => Promise<void>
   fetchRunReviews: (runId: string) => Promise<void>
   approveReview: (runId: string, reviewId: string) => Promise<void>
@@ -247,6 +251,9 @@ const initialRecentLaunches = loadRecentLaunches()
 
 export const useWorkflowRunStore = create<WorkflowRunStore>((set, get) => ({
   runsByJobId: {},
+  runsTotalByJobId: {},
+  runsPageByJobId: {},
+  runsLimitByJobId: {},
   runsById: {},
   nodesByRunId: {},
   reviewsByRunId: {},
@@ -255,11 +262,15 @@ export const useWorkflowRunStore = create<WorkflowRunStore>((set, get) => ({
   fetchingJobIds: new Set(),
   fetchingRunIds: new Set(),
 
-  async fetchRunsForJob(jobId) {
+  async fetchRunsForJob(jobId, params = {}) {
     if (!jobId || get().fetchingJobIds.has(jobId)) return
     set((state) => ({ fetchingJobIds: new Set([...state.fetchingJobIds, jobId]) }))
     try {
-      const response = await listWorkflowRunsByJob(jobId, { limit: 100 })
+      const existingPage = get().runsPageByJobId[jobId] ?? 1
+      const existingLimit = get().runsLimitByJobId[jobId] ?? 100
+      const page = params.page ?? existingPage
+      const limit = params.limit ?? existingLimit
+      const response: PaginatedResponse<WorkflowRun> = await listWorkflowRunsByJob(jobId, { page, limit })
       set((state) => {
         const nextRunsById = { ...state.runsById }
         response.data.forEach((run) => {
@@ -285,6 +296,9 @@ export const useWorkflowRunStore = create<WorkflowRunStore>((set, get) => ({
 
         return {
           runsByJobId: { ...state.runsByJobId, [jobId]: sortRunsDesc(response.data) },
+          runsTotalByJobId: { ...state.runsTotalByJobId, [jobId]: response.total },
+          runsPageByJobId: { ...state.runsPageByJobId, [jobId]: response.page },
+          runsLimitByJobId: { ...state.runsLimitByJobId, [jobId]: response.limit },
           runsById: nextRunsById,
           recentLaunchByScope: nextRecent,
           fetchingJobIds: new Set([...state.fetchingJobIds].filter((id) => id !== jobId)),
