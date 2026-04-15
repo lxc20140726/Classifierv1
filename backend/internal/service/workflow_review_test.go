@@ -119,6 +119,119 @@ func TestWorkflowRunnerServiceProcessingReviewApproveFlow(t *testing.T) {
 	}
 }
 
+func TestWorkflowRunnerServiceProcessingReviewApproveIsIdempotent(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	database := newServiceTestDB(t)
+	jobRepo := repository.NewJobRepository(database)
+	folderRepo := repository.NewFolderRepository(database)
+	workflowDefRepo := repository.NewWorkflowDefinitionRepository(database)
+	workflowRunRepo := repository.NewWorkflowRunRepository(database)
+	reviewRepo := repository.NewProcessingReviewRepository(database)
+	nodeRunRepo := repository.NewNodeRunRepository(database)
+	nodeSnapshotRepo := repository.NewNodeSnapshotRepository(database)
+
+	folder := &repository.Folder{
+		ID:             "folder-review-approve-idempotent",
+		Path:           "/source/review-approve-idempotent",
+		SourceDir:      "/source",
+		RelativePath:   "review-approve-idempotent",
+		Name:           "review-approve-idempotent",
+		Category:       "photo",
+		CategorySource: "manual",
+		Status:         "done",
+	}
+	if err := folderRepo.Upsert(ctx, folder); err != nil {
+		t.Fatalf("folderRepo.Upsert() error = %v", err)
+	}
+
+	producer := &processingItemSourceExecutor{items: []ProcessingItem{{
+		FolderID:   folder.ID,
+		SourcePath: folder.Path,
+		FolderName: folder.Name,
+		Category:   folder.Category,
+	}}}
+	graph := repository.WorkflowGraph{
+		Nodes: []repository.WorkflowGraphNode{
+			{ID: "source", Type: producer.Type(), Enabled: true},
+			{ID: "rename", Type: renameNodeExecutorType, Enabled: true, Config: map[string]any{"strategy": "template", "template": "{name}-ok"}, Inputs: map[string]repository.NodeInputSpec{
+				"items": {LinkSource: &repository.NodeLinkSource{SourceNodeID: "source", SourcePort: "items"}},
+			}},
+		},
+		Edges: []repository.WorkflowGraphEdge{
+			{ID: "e1", Source: "source", SourcePort: "items", Target: "rename", TargetPort: "items"},
+		},
+	}
+	graphJSON, err := json.Marshal(graph)
+	if err != nil {
+		t.Fatalf("json.Marshal(graph) error = %v", err)
+	}
+	def := &repository.WorkflowDefinition{
+		ID:        "wf-review-approve-idempotent",
+		Name:      "wf-review-approve-idempotent",
+		GraphJSON: string(graphJSON),
+		IsActive:  true,
+		Version:   1,
+	}
+	if err := workflowDefRepo.Create(ctx, def); err != nil {
+		t.Fatalf("workflowDefRepo.Create() error = %v", err)
+	}
+
+	svc := NewWorkflowRunnerService(
+		jobRepo,
+		folderRepo,
+		repository.NewSnapshotRepository(database),
+		workflowDefRepo,
+		workflowRunRepo,
+		nodeRunRepo,
+		nodeSnapshotRepo,
+		fs.NewMockAdapter(),
+		nil,
+		nil,
+	)
+	svc.SetProcessingReviewRepository(reviewRepo)
+	svc.RegisterExecutor(producer)
+
+	jobID, err := svc.StartJob(ctx, StartWorkflowJobInput{WorkflowDefID: def.ID})
+	if err != nil {
+		t.Fatalf("StartJob() error = %v", err)
+	}
+
+	run := waitWorkflowRunStatus(t, workflowRunRepo, jobID, "waiting_input")
+	reviews, err := svc.ListProcessingReviews(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("ListProcessingReviews() error = %v", err)
+	}
+	if len(reviews.Items) != 1 {
+		t.Fatalf("review items = %d, want 1", len(reviews.Items))
+	}
+
+	reviewID := reviews.Items[0].ID
+	if err := svc.ApproveProcessingReview(ctx, run.ID, reviewID); err != nil {
+		t.Fatalf("ApproveProcessingReview() first call error = %v", err)
+	}
+	if err := svc.ApproveProcessingReview(ctx, run.ID, reviewID); err != nil {
+		t.Fatalf("ApproveProcessingReview() second call error = %v", err)
+	}
+
+	run = waitWorkflowRunIDStatus(t, workflowRunRepo, run.ID, "succeeded")
+	if run.Status != "succeeded" {
+		t.Fatalf("workflow run status = %q, want succeeded", run.Status)
+	}
+	job := waitJobDone(t, jobRepo, jobID)
+	if job.Status != "succeeded" {
+		t.Fatalf("job status = %q, want succeeded", job.Status)
+	}
+	review, err := reviewRepo.GetByID(ctx, reviewID)
+	if err != nil {
+		t.Fatalf("reviewRepo.GetByID() error = %v", err)
+	}
+	if review.Status != "approved" {
+		t.Fatalf("review status = %q, want approved", review.Status)
+	}
+}
+
 func TestWorkflowRunnerServiceWorkflowRunUpdatedEventOnReviewFlow(t *testing.T) {
 	t.Parallel()
 

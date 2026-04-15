@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import { Link, useSearchParams } from 'react-router-dom'
 
@@ -321,6 +321,7 @@ function WorkflowRunRow({
 }) {
   const [expanded, setExpanded] = useState(false)
   const [isActing, setIsActing] = useState(false)
+  const actionLockRef = useRef(false)
   const isExpanded = !!forceExpanded || expanded
   const {
     rollbackRun,
@@ -344,8 +345,20 @@ function WorkflowRunRow({
     }
   }, [run.id, run.status, fetchRunDetail, fetchRunReviews])
 
-  async function handleRollback() {
+  function beginAction() {
+    if (actionLockRef.current) return false
+    actionLockRef.current = true
     setIsActing(true)
+    return true
+  }
+
+  function endAction() {
+    actionLockRef.current = false
+    setIsActing(false)
+  }
+
+  async function handleRollback() {
+    if (!beginAction()) return
     try {
       await rollbackRun(run.id)
       await onRefreshRuns()
@@ -359,12 +372,12 @@ function WorkflowRunRow({
       const message = rollbackError instanceof Error ? rollbackError.message : '回滚失败'
       pushNotification({ level: 'error', title: '回滚失败', message, jobId: run.job_id })
     } finally {
-      setIsActing(false)
+      endAction()
     }
   }
 
   async function handleApproveReview(reviewId: string) {
-    setIsActing(true)
+    if (!beginAction()) return
     try {
       await approveReview(run.id, reviewId)
       await onRefreshRuns()
@@ -383,12 +396,12 @@ function WorkflowRunRow({
         jobId: run.job_id,
       })
     } finally {
-      setIsActing(false)
+      endAction()
     }
   }
 
   async function handleRollbackReview(reviewId: string) {
-    setIsActing(true)
+    if (!beginAction()) return
     try {
       await rollbackReview(run.id, reviewId)
       await onRefreshRuns()
@@ -407,12 +420,12 @@ function WorkflowRunRow({
         jobId: run.job_id,
       })
     } finally {
-      setIsActing(false)
+      endAction()
     }
   }
 
   async function handleApproveAllPendingReviews() {
-    setIsActing(true)
+    if (!beginAction()) return
     try {
       const approved = await approveAllPendingReviews(run.id)
       await onRefreshRuns()
@@ -431,12 +444,12 @@ function WorkflowRunRow({
         jobId: run.job_id,
       })
     } finally {
-      setIsActing(false)
+      endAction()
     }
   }
 
   async function handleRollbackAllPendingReviews() {
-    setIsActing(true)
+    if (!beginAction()) return
     try {
       const rolledBack = await rollbackAllPendingReviews(run.id)
       await onRefreshRuns()
@@ -455,7 +468,7 @@ function WorkflowRunRow({
         jobId: run.job_id,
       })
     } finally {
-      setIsActing(false)
+      endAction()
     }
   }
 

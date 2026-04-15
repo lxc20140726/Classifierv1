@@ -816,6 +816,14 @@ export default function FolderListPage() {
         <div className="flex items-center gap-3">
           <button
             type="button"
+            onClick={() => navigate('/live-classification')}
+            className="flex items-center gap-2 border-2 border-foreground bg-background px-4 py-2 text-sm font-bold transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5"
+          >
+            <Link2 className="h-4 w-4" />
+            实时分类
+          </button>
+          <button
+            type="button"
             onClick={() => void triggerScan()}
             disabled={isScanning}
             className="flex items-center gap-2 border-2 border-foreground bg-background px-4 py-2 text-sm font-bold transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5 disabled:opacity-50 disabled:hover:bg-background disabled:hover:text-foreground disabled:hover:shadow-none disabled:hover:translate-y-0"

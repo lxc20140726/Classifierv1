@@ -162,7 +162,19 @@ func (s *OutputValidationService) CanMarkDone(ctx context.Context, folderID stri
 	if err != nil {
 		return false, fmt.Errorf("outputValidation.CanMarkDone get folder %q: %w", folderID, err)
 	}
-	return strings.EqualFold(strings.TrimSpace(folder.OutputCheckSummary.Status), "passed"), nil
+	if strings.EqualFold(strings.TrimSpace(folder.OutputCheckSummary.Status), "passed") {
+		return true, nil
+	}
+
+	check, validateErr := s.ValidateFolder(ctx, folderID)
+	if validateErr != nil {
+		if errors.Is(validateErr, repository.ErrNotFound) {
+			return false, nil
+		}
+		return false, fmt.Errorf("outputValidation.CanMarkDone validate folder %q: %w", folderID, validateErr)
+	}
+
+	return check != nil && strings.EqualFold(strings.TrimSpace(check.Status), "passed"), nil
 }
 
 func (s *OutputValidationService) validateAndPersistCheck(
@@ -210,35 +222,21 @@ func (s *OutputValidationService) validateAndPersistCheck(
 		addError("mapping_missing", "no output mappings found for folder", "", "", "")
 	}
 
-	primaryBySource := make(map[string][]*repository.FolderOutputMapping, len(mappings))
-	for _, mapping := range mappings {
-		if mapping == nil {
-			continue
-		}
-		sourcePath := normalizeWorkflowPath(mapping.SourcePath)
-		if sourcePath == "" {
-			continue
-		}
-		artifactType := strings.ToLower(strings.TrimSpace(mapping.ArtifactType))
-		if artifactType == "" || artifactType == "primary" || artifactType == "rename" {
-			primaryBySource[sourcePath] = append(primaryBySource[sourcePath], mapping)
-		}
-	}
-
 	for _, manifest := range manifests {
 		if manifest == nil {
 			continue
 		}
 		sourcePath := normalizeWorkflowPath(manifest.SourcePath)
-		sourceMappings := primaryBySource[sourcePath]
+		sourceMappings := outputValidationResolvePrimaryMappings(manifest, mappings)
 		if len(sourceMappings) == 0 {
 			addError("source_unmapped", "source file is not mapped to output", sourcePath, "", "")
 			continue
 		}
 
 		mappedAnyExisting := false
-		for _, mapping := range sourceMappings {
-			outputPath := normalizeWorkflowPath(mapping.OutputPath)
+		for _, candidate := range sourceMappings {
+			outputPath := normalizeWorkflowPath(candidate.outputPath)
+			mapping := candidate.mapping
 			if outputPath == "" {
 				addError("output_missing_path", "mapped output path is empty", sourcePath, "", mapping.NodeType)
 				continue
@@ -313,6 +311,101 @@ func (s *OutputValidationService) validateAndPersistCheck(
 	return check, nil
 }
 
+type outputValidationResolvedMapping struct {
+	mapping    *repository.FolderOutputMapping
+	outputPath string
+}
+
+func outputValidationResolvePrimaryMappings(
+	manifest *repository.FolderSourceManifest,
+	mappings []*repository.FolderOutputMapping,
+) []outputValidationResolvedMapping {
+	if manifest == nil {
+		return nil
+	}
+
+	sourcePath := normalizeWorkflowPath(manifest.SourcePath)
+	if sourcePath == "" {
+		return nil
+	}
+
+	resolved := make([]outputValidationResolvedMapping, 0, len(mappings))
+	for _, mapping := range mappings {
+		if !outputValidationIsPrimaryMapping(mapping) {
+			continue
+		}
+
+		mappingSourcePath := normalizeWorkflowPath(mapping.SourcePath)
+		if mappingSourcePath == "" {
+			continue
+		}
+
+		if mappingSourcePath == sourcePath {
+			resolved = append(resolved, outputValidationResolvedMapping{
+				mapping:    mapping,
+				outputPath: normalizeWorkflowPath(mapping.OutputPath),
+			})
+			continue
+		}
+
+		relativePath, ok := outputValidationManifestRelativePath(manifest, mappingSourcePath, sourcePath)
+		if !ok {
+			continue
+		}
+
+		resolved = append(resolved, outputValidationResolvedMapping{
+			mapping:    mapping,
+			outputPath: joinWorkflowPath(mapping.OutputPath, relativePath),
+		})
+	}
+
+	return resolved
+}
+
+func outputValidationIsPrimaryMapping(mapping *repository.FolderOutputMapping) bool {
+	if mapping == nil {
+		return false
+	}
+
+	artifactType := strings.ToLower(strings.TrimSpace(mapping.ArtifactType))
+	return artifactType == "" || artifactType == "primary" || artifactType == "rename"
+}
+
+func outputValidationManifestRelativePath(
+	manifest *repository.FolderSourceManifest,
+	mappingSourcePath string,
+	sourcePath string,
+) (string, bool) {
+	if manifest == nil {
+		return "", false
+	}
+
+	manifestRelativePath := normalizeWorkflowPath(manifest.RelativePath)
+	if manifestRelativePath != "" && manifestRelativePath != "." {
+		if outputValidationHasWorkflowPrefix(sourcePath, mappingSourcePath) {
+			return manifestRelativePath, true
+		}
+	}
+
+	if sourcePath == mappingSourcePath {
+		return "", false
+	}
+	if !outputValidationHasWorkflowPrefix(sourcePath, mappingSourcePath) {
+		return "", false
+	}
+
+	relativePath, err := filepath.Rel(mappingSourcePath, sourcePath)
+	if err != nil {
+		return "", false
+	}
+	relativePath = normalizeWorkflowPath(relativePath)
+	if relativePath == "" || relativePath == "." || strings.HasPrefix(relativePath, "..") {
+		return "", false
+	}
+
+	return relativePath, true
+}
+
 func outputValidationAllowedDirsByCategory(config *repository.AppConfig, category string) []string {
 	if config == nil {
 		return nil
@@ -344,7 +437,7 @@ func outputValidationPathAllowed(outputPath string, allowedOutputDirSet map[stri
 		if allowedDir == "" {
 			continue
 		}
-		if normalizedPath == allowedDir || strings.HasPrefix(normalizedPath, allowedDir+string(filepath.Separator)) {
+		if outputValidationHasWorkflowPrefix(normalizedPath, allowedDir) {
 			return true
 		}
 	}
@@ -357,6 +450,15 @@ func outputValidationNormalizeForCompare(path string) string {
 		return ""
 	}
 	return strings.ToLower(normalized)
+}
+
+func outputValidationHasWorkflowPrefix(path string, prefix string) bool {
+	normalizedPath := outputValidationNormalizeForCompare(path)
+	normalizedPrefix := outputValidationNormalizeForCompare(prefix)
+	if normalizedPath == "" || normalizedPrefix == "" {
+		return false
+	}
+	return normalizedPath == normalizedPrefix || strings.HasPrefix(normalizedPath, normalizedPrefix+"/")
 }
 
 func outputValidationFailedFiles(folder *repository.Folder, errorsList []repository.OutputCheckError) []string {

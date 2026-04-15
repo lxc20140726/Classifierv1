@@ -16,6 +16,8 @@ const navItems = [
   { to: '/settings', label: '设置', icon: Settings },
 ]
 
+const sidebarNavItems = navItems.filter((item) => item.to !== '/live-classification')
+
 function ActiveDot() {
   const dotRef = useRef<HTMLDivElement>(null)
 
@@ -53,7 +55,7 @@ export function Sidebar() {
         <h1 className="mt-2 text-xl font-black tracking-tight">媒体整理工具</h1>
       </div>
       <nav className="flex flex-1 flex-col gap-3 p-4">
-        {navItems.map((item) => {
+        {sidebarNavItems.map((item) => {
           const Icon = item.icon
 
           return (

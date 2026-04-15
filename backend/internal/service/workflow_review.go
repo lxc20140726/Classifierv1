@@ -48,6 +48,12 @@ func (s *WorkflowRunnerService) ApproveProcessingReview(ctx context.Context, wor
 	if err != nil {
 		return err
 	}
+	if strings.TrimSpace(review.Status) == "approved" {
+		if err := s.refreshReviewDrivenRunStatus(ctx, run.ID); err != nil {
+			return fmt.Errorf("workflowRunner.ApproveProcessingReview refresh run status: %w", err)
+		}
+		return nil
+	}
 	if strings.TrimSpace(review.Status) != "pending" {
 		return fmt.Errorf("workflowRunner.ApproveProcessingReview: review %q status %q is not pending", reviewID, review.Status)
 	}

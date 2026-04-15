@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -416,86 +417,104 @@ func buildFolderLineageFlow(
 	targetFiles := make([]FolderLineageFlowTargetFile, 0, len(mappings))
 	links := make([]FolderLineageFlowLink, 0, len(mappings))
 	exactMatchCount := 0
+	artifactSourceFileIDsByPath := make(map[string][]string, len(mappings))
+	sortedMappings := cloneAndSortLineageMappings(mappings)
+	processedMappings := make([]bool, len(sortedMappings))
 
-	for idx, mapping := range mappings {
-		if mapping == nil {
-			continue
-		}
-		usedExactMatch := false
-		sourceFileID := sourceFileIDByPath[normalizeLineagePath(mapping.SourcePath)]
-		if sourceFileID != "" {
-			usedExactMatch = true
-		}
-		if sourceFileID == "" {
-			sourceFileID = sourceFileIDByRelativePath[normalizeLineagePath(mapping.SourceRelativePath)]
-		}
-		if sourceFileID == "" {
-			continue
-		}
+	progress := true
+	for progress {
+		progress = false
 
-		targetPath := normalizeLineagePath(mapping.OutputPath)
-		if targetPath == "" {
-			continue
-		}
-		targetDirectoryPath := normalizeLineagePath(filepath.Dir(targetPath))
-		directory, ok := targetDirectoryByPath[targetDirectoryPath]
-		if !ok {
-			directoryID := fmt.Sprintf("target-directory-%d", len(targetDirectories)+1)
-			directoryLabel := filepath.Base(targetDirectoryPath)
-			if directoryLabel == "." || directoryLabel == "/" || strings.TrimSpace(directoryLabel) == "" {
-				directoryLabel = targetDirectoryPath
+		for idx, mapping := range sortedMappings {
+			if mapping == nil || processedMappings[idx] {
+				continue
 			}
-			state := &targetDirectoryState{
-				directory: FolderLineageFlowDirectory{
-					ID:           directoryID,
-					Path:         targetDirectoryPath,
-					Label:        directoryLabel,
-					ArtifactType: strings.TrimSpace(mapping.ArtifactType),
-				},
-				order: len(targetDirectories),
+
+			sourceFileIDs, usedExactMatch := resolveLineageFlowSourceFileIDs(
+				sourceFiles,
+				sourceFileIDByPath,
+				sourceFileIDByRelativePath,
+				artifactSourceFileIDsByPath,
+				mapping,
+			)
+			if len(sourceFileIDs) == 0 {
+				continue
 			}
-			targetDirectoryByPath[targetDirectoryPath] = state
-			targetDirectories = append(targetDirectories, state.directory)
-			directory = state
-		}
-		if directory.directory.ArtifactType == "" && strings.TrimSpace(mapping.ArtifactType) != "" {
-			directory.directory.ArtifactType = strings.TrimSpace(mapping.ArtifactType)
-			targetDirectories[directory.order].ArtifactType = directory.directory.ArtifactType
-		}
 
-		targetFileID := strings.TrimSpace(mapping.ID)
-		if targetFileID == "" {
-			targetFileID = fmt.Sprintf("target-file-%d", idx+1)
-		}
-		jobID := reviewJobsByWorkflowRun[strings.TrimSpace(mapping.WorkflowRunID)]
+			targetPath := normalizeLineagePath(mapping.OutputPath)
+			if targetPath == "" {
+				processedMappings[idx] = true
+				continue
+			}
+			targetDirectoryPath := normalizeLineagePath(filepath.Dir(targetPath))
+			directory, ok := targetDirectoryByPath[targetDirectoryPath]
+			if !ok {
+				directoryID := fmt.Sprintf("target-directory-%d", len(targetDirectories)+1)
+				directoryLabel := filepath.Base(targetDirectoryPath)
+				if directoryLabel == "." || directoryLabel == "/" || strings.TrimSpace(directoryLabel) == "" {
+					directoryLabel = targetDirectoryPath
+				}
+				state := &targetDirectoryState{
+					directory: FolderLineageFlowDirectory{
+						ID:           directoryID,
+						Path:         targetDirectoryPath,
+						Label:        directoryLabel,
+						ArtifactType: strings.TrimSpace(mapping.ArtifactType),
+					},
+					order: len(targetDirectories),
+				}
+				targetDirectoryByPath[targetDirectoryPath] = state
+				targetDirectories = append(targetDirectories, state.directory)
+				directory = state
+			}
+			if directory.directory.ArtifactType == "" && strings.TrimSpace(mapping.ArtifactType) != "" {
+				directory.directory.ArtifactType = strings.TrimSpace(mapping.ArtifactType)
+				targetDirectories[directory.order].ArtifactType = directory.directory.ArtifactType
+			}
 
-		targetFiles = append(targetFiles, FolderLineageFlowTargetFile{
-			ID:            targetFileID,
-			DirectoryID:   directory.directory.ID,
-			Name:          filepath.Base(targetPath),
-			Path:          targetPath,
-			ArtifactType:  strings.TrimSpace(mapping.ArtifactType),
-			NodeType:      strings.TrimSpace(mapping.NodeType),
-			WorkflowRunID: strings.TrimSpace(mapping.WorkflowRunID),
-			JobID:         jobID,
-		})
+			targetFileID := strings.TrimSpace(mapping.ID)
+			if targetFileID == "" {
+				targetFileID = fmt.Sprintf("target-file-%d", idx+1)
+			}
+			jobID := reviewJobsByWorkflowRun[strings.TrimSpace(mapping.WorkflowRunID)]
 
-		linkID := strings.TrimSpace(mapping.ID)
-		if linkID == "" {
-			linkID = fmt.Sprintf("link-%d", idx+1)
-		} else {
-			linkID = "link-" + linkID
-		}
-		links = append(links, FolderLineageFlowLink{
-			ID:            linkID,
-			SourceFileID:  sourceFileID,
-			TargetFileID:  targetFileID,
-			WorkflowRunID: strings.TrimSpace(mapping.WorkflowRunID),
-			JobID:         jobID,
-			NodeType:      strings.TrimSpace(mapping.NodeType),
-		})
-		if usedExactMatch {
-			exactMatchCount++
+			targetFiles = append(targetFiles, FolderLineageFlowTargetFile{
+				ID:            targetFileID,
+				DirectoryID:   directory.directory.ID,
+				Name:          filepath.Base(targetPath),
+				Path:          targetPath,
+				ArtifactType:  strings.TrimSpace(mapping.ArtifactType),
+				NodeType:      strings.TrimSpace(mapping.NodeType),
+				WorkflowRunID: strings.TrimSpace(mapping.WorkflowRunID),
+				JobID:         jobID,
+			})
+
+			linkIDBase := strings.TrimSpace(mapping.ID)
+			if linkIDBase == "" {
+				linkIDBase = fmt.Sprintf("link-%d", idx+1)
+			} else {
+				linkIDBase = "link-" + linkIDBase
+			}
+			for sourceIdx, sourceFileID := range sourceFileIDs {
+				links = append(links, FolderLineageFlowLink{
+					ID:            buildLineageFlowLinkID(linkIDBase, sourceIdx, len(sourceFileIDs)),
+					SourceFileID:  sourceFileID,
+					TargetFileID:  targetFileID,
+					WorkflowRunID: strings.TrimSpace(mapping.WorkflowRunID),
+					JobID:         jobID,
+					NodeType:      strings.TrimSpace(mapping.NodeType),
+				})
+			}
+			artifactSourceFileIDsByPath[targetPath] = mergeLineageFlowSourceFileIDs(
+				artifactSourceFileIDsByPath[targetPath],
+				sourceFileIDs,
+				sourceFileOrderByID,
+			)
+			if usedExactMatch {
+				exactMatchCount++
+			}
+			processedMappings[idx] = true
+			progress = true
 		}
 	}
 
@@ -534,6 +553,132 @@ func buildFolderLineageFlow(
 		TargetFiles:       targetFiles,
 		Links:             links,
 	}, exactMatchCount, len(links)
+}
+
+func cloneAndSortLineageMappings(mappings []*repository.FolderOutputMapping) []*repository.FolderOutputMapping {
+	cloned := make([]*repository.FolderOutputMapping, 0, len(mappings))
+	for _, mapping := range mappings {
+		if mapping == nil {
+			continue
+		}
+		cloned = append(cloned, mapping)
+	}
+
+	sort.SliceStable(cloned, func(i, j int) bool {
+		if cloned[i].CreatedAt.Equal(cloned[j].CreatedAt) {
+			leftID := strings.TrimSpace(cloned[i].ID)
+			rightID := strings.TrimSpace(cloned[j].ID)
+			if leftID == rightID {
+				return normalizeLineagePath(cloned[i].OutputPath) < normalizeLineagePath(cloned[j].OutputPath)
+			}
+			return leftID < rightID
+		}
+		return cloned[i].CreatedAt.Before(cloned[j].CreatedAt)
+	})
+
+	return cloned
+}
+
+func resolveLineageFlowSourceFileIDs(
+	sourceFiles []FolderLineageFlowSourceFile,
+	sourceFileIDByPath map[string]string,
+	sourceFileIDByRelativePath map[string]string,
+	artifactSourceFileIDsByPath map[string][]string,
+	mapping *repository.FolderOutputMapping,
+) ([]string, bool) {
+	if mapping == nil {
+		return nil, false
+	}
+
+	normalizedSourcePath := normalizeLineagePath(mapping.SourcePath)
+	if sourceFileID := sourceFileIDByPath[normalizedSourcePath]; sourceFileID != "" {
+		return []string{sourceFileID}, true
+	}
+
+	normalizedRelativePath := normalizeLineagePath(mapping.SourceRelativePath)
+	if sourceFileID := sourceFileIDByRelativePath[normalizedRelativePath]; sourceFileID != "" {
+		return []string{sourceFileID}, false
+	}
+
+	if sourceFileIDs := artifactSourceFileIDsByPath[normalizedSourcePath]; len(sourceFileIDs) > 0 {
+		return sourceFileIDs, false
+	}
+
+	if normalizedSourcePath == "" {
+		return nil, false
+	}
+
+	descendantIDs := collectLineageDescendantSourceFileIDs(sourceFiles, normalizedSourcePath)
+	if len(descendantIDs) == 0 {
+		return nil, false
+	}
+
+	return descendantIDs, false
+}
+
+func collectLineageDescendantSourceFileIDs(
+	sourceFiles []FolderLineageFlowSourceFile,
+	containerPath string,
+) []string {
+	prefix := strings.TrimSuffix(containerPath, "/") + "/"
+	descendants := make([]string, 0, len(sourceFiles))
+	for _, sourceFile := range sourceFiles {
+		if strings.HasPrefix(sourceFile.Path, prefix) {
+			descendants = append(descendants, sourceFile.ID)
+		}
+	}
+	return descendants
+}
+
+func mergeLineageFlowSourceFileIDs(
+	existing []string,
+	incoming []string,
+	sourceFileOrderByID map[string]int,
+) []string {
+	if len(existing) == 0 {
+		return append([]string(nil), incoming...)
+	}
+
+	merged := make([]string, 0, len(existing)+len(incoming))
+	seen := make(map[string]struct{}, len(existing)+len(incoming))
+	for _, sourceFileID := range existing {
+		if strings.TrimSpace(sourceFileID) == "" {
+			continue
+		}
+		if _, ok := seen[sourceFileID]; ok {
+			continue
+		}
+		seen[sourceFileID] = struct{}{}
+		merged = append(merged, sourceFileID)
+	}
+	for _, sourceFileID := range incoming {
+		if strings.TrimSpace(sourceFileID) == "" {
+			continue
+		}
+		if _, ok := seen[sourceFileID]; ok {
+			continue
+		}
+		seen[sourceFileID] = struct{}{}
+		merged = append(merged, sourceFileID)
+	}
+
+	sort.Slice(merged, func(i, j int) bool {
+		leftOrder, leftOK := sourceFileOrderByID[merged[i]]
+		rightOrder, rightOK := sourceFileOrderByID[merged[j]]
+		if leftOK && rightOK && leftOrder != rightOrder {
+			return leftOrder < rightOrder
+		}
+		return merged[i] < merged[j]
+	})
+
+	return merged
+}
+
+func buildLineageFlowLinkID(base string, idx int, total int) string {
+	if total <= 1 {
+		return base
+	}
+	return base + "-" + strconv.Itoa(idx+1)
 }
 
 func deriveLineageSourceDirectoryPath(manifests []*repository.FolderSourceManifest) string {

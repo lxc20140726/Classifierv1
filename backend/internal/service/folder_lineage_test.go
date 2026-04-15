@@ -603,6 +603,113 @@ func TestFolderLineageServiceBuildsFlowFromLatestManifestAndMappings(t *testing.
 	}
 }
 
+func TestFolderLineageServiceBuildsFlowForFolderRootAndChainedArtifacts(t *testing.T) {
+	t.Parallel()
+
+	manifests := []*repository.FolderSourceManifest{
+		{
+			ID:           "sm-1",
+			FolderID:     "f1",
+			BatchID:      "b1",
+			SourcePath:   `E:\scan\album\1.jpg`,
+			RelativePath: "1.jpg",
+			FileName:     "1.jpg",
+			SizeBytes:    100,
+		},
+		{
+			ID:           "sm-2",
+			FolderID:     "f1",
+			BatchID:      "b1",
+			SourcePath:   `E:\scan\album\2.jpg`,
+			RelativePath: "2.jpg",
+			FileName:     "2.jpg",
+			SizeBytes:    200,
+		},
+	}
+
+	svc := newTestLineageService(
+		&repository.Folder{ID: "f1", Path: `E:\scan\album`, SourceDir: `E:\scan`, RelativePath: "album", Name: "album", Status: "done", Category: "photo"},
+		[]*repository.FolderPathObservation{{
+			ID: "o1", FolderID: "f1", Path: `E:\scan\album`, IsCurrent: true, FirstSeenAt: testLineageTime(1), LastSeenAt: testLineageTime(1),
+		}},
+		nil,
+		nil,
+		nil,
+		manifests,
+		&stubLineageOutputMappingRepo{
+			latestWorkflowRunID: "wr-1",
+			byWorkflowRun: map[string][]*repository.FolderOutputMapping{
+				"wr-1": {
+					{
+						ID:            "m2",
+						WorkflowRunID: "wr-1",
+						FolderID:      "f1",
+						SourcePath:    ".archives/album.cbz",
+						OutputPath:    `E:\target\photo\album\album.cbz`,
+						NodeType:      "move-node",
+						ArtifactType:  "primary",
+						CreatedAt:     testLineageTime(2),
+					},
+					{
+						ID:            "m1",
+						WorkflowRunID: "wr-1",
+						FolderID:      "f1",
+						SourcePath:    `E:\scan\album`,
+						OutputPath:    ".archives/album.cbz",
+						NodeType:      "compress-node",
+						ArtifactType:  "archive",
+						CreatedAt:     testLineageTime(2),
+					},
+				},
+			},
+		},
+	)
+
+	resp, err := svc.GetFolderLineage(context.Background(), "f1")
+	if err != nil {
+		t.Fatalf("GetFolderLineage() error = %v", err)
+	}
+	if resp.Flow == nil {
+		t.Fatalf("flow should not be nil")
+	}
+	if resp.Flow.SourceDirectory.Path != "e:/scan/album" {
+		t.Fatalf("flow.source_directory.path = %q, want %q", resp.Flow.SourceDirectory.Path, "e:/scan/album")
+	}
+	if len(resp.Flow.SourceFiles) != 2 {
+		t.Fatalf("len(flow.source_files) = %d, want 2", len(resp.Flow.SourceFiles))
+	}
+	if len(resp.Flow.TargetFiles) != 2 {
+		t.Fatalf("len(flow.target_files) = %d, want 2", len(resp.Flow.TargetFiles))
+	}
+	if len(resp.Flow.Links) != 4 {
+		t.Fatalf("len(flow.links) = %d, want 4", len(resp.Flow.Links))
+	}
+
+	targetPaths := map[string]bool{}
+	for _, targetFile := range resp.Flow.TargetFiles {
+		targetPaths[targetFile.Path] = true
+	}
+	for _, expectedPath := range []string{
+		".archives/album.cbz",
+		"e:/target/photo/album/album.cbz",
+	} {
+		if !targetPaths[expectedPath] {
+			t.Fatalf("flow target missing %q", expectedPath)
+		}
+	}
+
+	linkCountByTargetID := map[string]int{}
+	for _, link := range resp.Flow.Links {
+		linkCountByTargetID[link.TargetFileID]++
+	}
+	if linkCountByTargetID["m1"] != 2 {
+		t.Fatalf("archive target link count = %d, want 2", linkCountByTargetID["m1"])
+	}
+	if linkCountByTargetID["m2"] != 2 {
+		t.Fatalf("final target link count = %d, want 2", linkCountByTargetID["m2"])
+	}
+}
+
 func TestFolderLineageServiceFlowIsNilWhenMissingDataOrNoValidLinks(t *testing.T) {
 	t.Parallel()
 
