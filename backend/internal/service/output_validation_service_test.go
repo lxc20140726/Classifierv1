@@ -183,6 +183,122 @@ func TestOutputValidationAllowsConfiguredOutputDirAcrossCategories(t *testing.T)
 	}
 }
 
+func TestOutputValidationPathAllowedAllowsWindowsDirSeparators(t *testing.T) {
+	t.Parallel()
+
+	allowed := map[string]struct{}{
+		outputValidationNormalizeForCompare(`E:\target\mixed`): {},
+	}
+
+	if !outputValidationPathAllowed(`E:\target\mixed\album\movie.mp4`, allowed) {
+		t.Fatalf("outputValidationPathAllowed() = false, want true for child of configured Windows output dir")
+	}
+}
+
+func TestOutputValidationArchiveMovedLaterSatisfiesSourceManifests(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	database := newServiceTestDB(t)
+	folderRepo := repository.NewFolderRepository(database)
+	configRepo := repository.NewConfigRepository(database)
+	manifestRepo := repository.NewSourceManifestRepository(database)
+	mappingRepo := repository.NewOutputMappingRepository(database)
+	outputCheckRepo := repository.NewOutputCheckRepository(database)
+	adapter := fs.NewMockAdapter()
+
+	if err := configRepo.SaveAppConfig(ctx, &repository.AppConfig{
+		Version: 1,
+		OutputDirs: repository.AppConfigOutputDirs{
+			Mixed: []string{"/target/mixed"},
+			Photo: []string{"/target/photo"},
+		},
+	}); err != nil {
+		t.Fatalf("configRepo.SaveAppConfig() error = %v", err)
+	}
+
+	folder := &repository.Folder{
+		ID:             "folder-output-validation-archive-moved",
+		Path:           "/source/album",
+		SourceDir:      "/source",
+		RelativePath:   "album",
+		Name:           "album",
+		Category:       "photo",
+		CategorySource: "workflow",
+		Status:         "pending",
+	}
+	if err := folderRepo.Upsert(ctx, folder); err != nil {
+		t.Fatalf("folderRepo.Upsert() error = %v", err)
+	}
+
+	if err := manifestRepo.CreateBatchForWorkflowRun(ctx, "wr-output-validation-archive-moved", folder.ID, "batch-1", []*repository.FolderSourceManifest{
+		{
+			ID:            "manifest-archive-moved-1",
+			WorkflowRunID: "wr-output-validation-archive-moved",
+			FolderID:      folder.ID,
+			BatchID:       "batch-1",
+			SourcePath:    "/source/album/__photo/1.jpg",
+			RelativePath:  "__photo/1.jpg",
+			FileName:      "1.jpg",
+			SizeBytes:     10,
+		},
+		{
+			ID:            "manifest-archive-moved-2",
+			WorkflowRunID: "wr-output-validation-archive-moved",
+			FolderID:      folder.ID,
+			BatchID:       "batch-1",
+			SourcePath:    "/source/album/__photo/2.jpg",
+			RelativePath:  "__photo/2.jpg",
+			FileName:      "2.jpg",
+			SizeBytes:     20,
+		},
+	}); err != nil {
+		t.Fatalf("manifestRepo.CreateBatchForWorkflowRun() error = %v", err)
+	}
+
+	if err := mappingRepo.ReplaceByWorkflowRunID(ctx, "wr-output-validation-archive-moved", []*repository.FolderOutputMapping{
+		{
+			ID:               "mapping-archive-created",
+			WorkflowRunID:    "wr-output-validation-archive-moved",
+			FolderID:         folder.ID,
+			SourcePath:       "/source/album/__photo",
+			OutputPath:       "/target/mixed/album.cbz",
+			OutputContainer:  "/target/mixed",
+			NodeType:         compressNodeExecutorType,
+			ArtifactType:     "archive",
+			RequiredArtifact: true,
+		},
+		{
+			ID:               "mapping-archive-moved",
+			WorkflowRunID:    "wr-output-validation-archive-moved",
+			FolderID:         folder.ID,
+			SourcePath:       "/target/mixed/album.cbz",
+			OutputPath:       "/target/photo/album/photo.cbz",
+			OutputContainer:  "/target/photo/album",
+			NodeType:         phase4MoveNodeExecutorType,
+			ArtifactType:     "primary",
+			RequiredArtifact: false,
+		},
+	}); err != nil {
+		t.Fatalf("mappingRepo.ReplaceByWorkflowRunID() error = %v", err)
+	}
+
+	adapter.AddFile("/target/photo/album/photo.cbz", []byte("archive"))
+
+	svc := NewOutputValidationService(adapter, folderRepo, configRepo, manifestRepo, mappingRepo, outputCheckRepo)
+
+	check, err := svc.ValidateFolder(ctx, folder.ID)
+	if err != nil {
+		t.Fatalf("ValidateFolder() error = %v", err)
+	}
+	if check.Status != "passed" {
+		t.Fatalf("check.Status = %q, want passed (errors=%+v)", check.Status, check.Errors)
+	}
+	if check.MismatchCount != 0 {
+		t.Fatalf("check.MismatchCount = %d, want 0", check.MismatchCount)
+	}
+}
+
 func TestOutputValidationCanMarkDoneRevalidatesStaleSummary(t *testing.T) {
 	t.Parallel()
 

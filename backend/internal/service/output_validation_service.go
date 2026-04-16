@@ -227,7 +227,7 @@ func (s *OutputValidationService) validateAndPersistCheck(
 			continue
 		}
 		sourcePath := normalizeWorkflowPath(manifest.SourcePath)
-		sourceMappings := outputValidationResolvePrimaryMappings(manifest, mappings)
+		sourceMappings := outputValidationResolveSourceMappings(manifest, mappings)
 		if len(sourceMappings) == 0 {
 			addError("source_unmapped", "source file is not mapped to output", sourcePath, "", "")
 			continue
@@ -263,7 +263,7 @@ func (s *OutputValidationService) validateAndPersistCheck(
 		if mapping == nil || !mapping.RequiredArtifact {
 			continue
 		}
-		outputPath := normalizeWorkflowPath(mapping.OutputPath)
+		outputPath := outputValidationResolveFinalOutputPath(mapping.OutputPath, mappings)
 		if outputPath == "" {
 			addError("required_artifact_missing_path", "required artifact output path is empty", mapping.SourcePath, "", mapping.NodeType)
 			continue
@@ -316,7 +316,7 @@ type outputValidationResolvedMapping struct {
 	outputPath string
 }
 
-func outputValidationResolvePrimaryMappings(
+func outputValidationResolveSourceMappings(
 	manifest *repository.FolderSourceManifest,
 	mappings []*repository.FolderOutputMapping,
 ) []outputValidationResolvedMapping {
@@ -331,7 +331,7 @@ func outputValidationResolvePrimaryMappings(
 
 	resolved := make([]outputValidationResolvedMapping, 0, len(mappings))
 	for _, mapping := range mappings {
-		if !outputValidationIsPrimaryMapping(mapping) {
+		if !outputValidationCanResolveSourceMapping(mapping) {
 			continue
 		}
 
@@ -343,8 +343,18 @@ func outputValidationResolvePrimaryMappings(
 		if mappingSourcePath == sourcePath {
 			resolved = append(resolved, outputValidationResolvedMapping{
 				mapping:    mapping,
-				outputPath: normalizeWorkflowPath(mapping.OutputPath),
+				outputPath: outputValidationResolveFinalOutputPath(mapping.OutputPath, mappings),
 			})
+			continue
+		}
+
+		if outputValidationIsArchiveMapping(mapping) {
+			if outputValidationHasWorkflowPrefix(sourcePath, mappingSourcePath) {
+				resolved = append(resolved, outputValidationResolvedMapping{
+					mapping:    mapping,
+					outputPath: outputValidationResolveFinalOutputPath(mapping.OutputPath, mappings),
+				})
+			}
 			continue
 		}
 
@@ -355,20 +365,67 @@ func outputValidationResolvePrimaryMappings(
 
 		resolved = append(resolved, outputValidationResolvedMapping{
 			mapping:    mapping,
-			outputPath: joinWorkflowPath(mapping.OutputPath, relativePath),
+			outputPath: outputValidationResolveFinalOutputPath(joinWorkflowPath(mapping.OutputPath, relativePath), mappings),
 		})
 	}
 
 	return resolved
 }
 
-func outputValidationIsPrimaryMapping(mapping *repository.FolderOutputMapping) bool {
+func outputValidationCanResolveSourceMapping(mapping *repository.FolderOutputMapping) bool {
 	if mapping == nil {
 		return false
 	}
 
 	artifactType := strings.ToLower(strings.TrimSpace(mapping.ArtifactType))
-	return artifactType == "" || artifactType == "primary" || artifactType == "rename"
+	return artifactType == "" || artifactType == "primary" || artifactType == "rename" || artifactType == "archive"
+}
+
+func outputValidationIsArchiveMapping(mapping *repository.FolderOutputMapping) bool {
+	if mapping == nil {
+		return false
+	}
+
+	return strings.EqualFold(strings.TrimSpace(mapping.ArtifactType), "archive")
+}
+
+func outputValidationResolveFinalOutputPath(outputPath string, mappings []*repository.FolderOutputMapping) string {
+	current := normalizeWorkflowPath(outputPath)
+	if current == "" {
+		return ""
+	}
+
+	seen := map[string]struct{}{}
+	for {
+		key := outputValidationNormalizeForCompare(current)
+		if key == "" {
+			return current
+		}
+		if _, exists := seen[key]; exists {
+			return current
+		}
+		seen[key] = struct{}{}
+
+		next := ""
+		for _, mapping := range mappings {
+			if mapping == nil {
+				continue
+			}
+			if outputValidationNormalizeForCompare(mapping.SourcePath) != key {
+				continue
+			}
+			candidate := normalizeWorkflowPath(mapping.OutputPath)
+			if candidate == "" || outputValidationNormalizeForCompare(candidate) == key {
+				continue
+			}
+			next = candidate
+			break
+		}
+		if next == "" {
+			return current
+		}
+		current = next
+	}
 }
 
 func outputValidationManifestRelativePath(
@@ -450,6 +507,7 @@ func outputValidationNormalizeForCompare(path string) string {
 	if normalized == "" {
 		return ""
 	}
+	normalized = strings.ReplaceAll(normalized, `\`, "/")
 	return strings.ToLower(normalized)
 }
 
