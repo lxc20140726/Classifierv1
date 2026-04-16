@@ -403,3 +403,90 @@ func TestNormalizeWorkflowDefinitionGraphs_MigratesLegacyMovePathOption(t *testi
 		t.Fatalf("legacy key target_dir_option_id should be removed")
 	}
 }
+
+func TestNormalizeWorkflowDefinitionGraphs_AddsGenericMixedOtherBranch(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	database := newServiceTestDB(t)
+	repo := repository.NewWorkflowDefinitionRepository(database)
+
+	graph := repository.WorkflowGraph{
+		Nodes: []repository.WorkflowGraphNode{
+			{ID: "g-mixed-router", Type: "mixed-leaf-router", Enabled: true},
+			{ID: "g-rename-mixed-video", Type: "rename-node", Enabled: true},
+			{ID: "g-rename-mixed-photo", Type: "rename-node", Enabled: true},
+			{ID: "g-collect", Type: "collect-node", Enabled: true, Inputs: map[string]repository.NodeInputSpec{
+				"items_5": {LinkSource: &repository.NodeLinkSource{SourceNodeID: "g-rename-mixed-video", SourcePort: "items"}},
+				"items_6": {LinkSource: &repository.NodeLinkSource{SourceNodeID: "g-rename-mixed-photo", SourcePort: "items"}},
+			}},
+		},
+		Edges: []repository.WorkflowGraphEdge{
+			{ID: "e-mixed-router-rename-video", Source: "g-mixed-router", SourcePort: "video", Target: "g-rename-mixed-video", TargetPort: "items"},
+			{ID: "e-mixed-router-rename-photo", Source: "g-mixed-router", SourcePort: "photo", Target: "g-rename-mixed-photo", TargetPort: "items"},
+			{ID: "e-rename-mixed-video-collect", Source: "g-rename-mixed-video", SourcePort: "items", Target: "g-collect", TargetPort: "items_5"},
+			{ID: "e-rename-mixed-photo-collect", Source: "g-rename-mixed-photo", SourcePort: "items", Target: "g-collect", TargetPort: "items_6"},
+		},
+	}
+	graphJSON, err := json.Marshal(graph)
+	if err != nil {
+		t.Fatalf("json.Marshal(graph) error = %v", err)
+	}
+
+	def := &repository.WorkflowDefinition{
+		ID:        "wf-generic-mixed-other",
+		Name:      "通用处理流程",
+		GraphJSON: string(graphJSON),
+		IsActive:  false,
+		Version:   1,
+	}
+	if err := repo.Create(ctx, def); err != nil {
+		t.Fatalf("repo.Create() error = %v", err)
+	}
+
+	if err := NormalizeWorkflowDefinitionGraphs(ctx, repo); err != nil {
+		t.Fatalf("NormalizeWorkflowDefinitionGraphs() error = %v", err)
+	}
+
+	updated, err := repo.GetByID(ctx, def.ID)
+	if err != nil {
+		t.Fatalf("repo.GetByID() error = %v", err)
+	}
+	var normalized repository.WorkflowGraph
+	if err := json.Unmarshal([]byte(updated.GraphJSON), &normalized); err != nil {
+		t.Fatalf("json.Unmarshal(normalized) error = %v", err)
+	}
+
+	nodeByID := map[string]repository.WorkflowGraphNode{}
+	for _, node := range normalized.Nodes {
+		nodeByID[node.ID] = node
+	}
+	otherNode, ok := nodeByID["g-rename-mixed-other"]
+	if !ok {
+		t.Fatalf("g-rename-mixed-other node missing")
+	}
+	if otherNode.Inputs["items"].LinkSource == nil ||
+		otherNode.Inputs["items"].LinkSource.SourceNodeID != "g-mixed-router" ||
+		otherNode.Inputs["items"].LinkSource.SourcePort != "unsupported" {
+		t.Fatalf("g-rename-mixed-other items input = %#v", otherNode.Inputs["items"])
+	}
+	collectNode := nodeByID["g-collect"]
+	if collectNode.Inputs["items_7"].LinkSource == nil ||
+		collectNode.Inputs["items_7"].LinkSource.SourceNodeID != "g-rename-mixed-other" {
+		t.Fatalf("g-collect items_7 input = %#v", collectNode.Inputs["items_7"])
+	}
+
+	hasUnsupportedEdge := false
+	hasCollectEdge := false
+	for _, edge := range normalized.Edges {
+		if edge.Source == "g-mixed-router" && edge.SourcePort == "unsupported" && edge.Target == "g-rename-mixed-other" {
+			hasUnsupportedEdge = true
+		}
+		if edge.Source == "g-rename-mixed-other" && edge.Target == "g-collect" && edge.TargetPort == "items_7" {
+			hasCollectEdge = true
+		}
+	}
+	if !hasUnsupportedEdge || !hasCollectEdge {
+		t.Fatalf("missing mixed other edges: unsupported=%v collect=%v edges=%#v", hasUnsupportedEdge, hasCollectEdge, normalized.Edges)
+	}
+}

@@ -153,7 +153,7 @@ func dbSubtreeRootPathFromEntry(raw any) string {
 }
 
 func dbSubtreeBuildEntry(folders []*repository.Folder, rootPath string) (ClassifiedEntry, bool) {
-	trimmedRoot := strings.TrimSpace(rootPath)
+	trimmedRoot := normalizeWorkflowPath(rootPath)
 	if trimmedRoot == "" {
 		return ClassifiedEntry{}, false
 	}
@@ -167,7 +167,7 @@ func dbSubtreeBuildEntry(folders []*repository.Folder, rootPath string) (Classif
 		if folder == nil {
 			continue
 		}
-		path := strings.TrimSpace(folder.Path)
+		path := normalizeWorkflowPath(folder.Path)
 		if path == "" {
 			continue
 		}
@@ -215,7 +215,7 @@ func dbSubtreeBuildEntry(folders []*repository.Folder, rootPath string) (Classif
 		if path == trimmedRoot {
 			continue
 		}
-		parentPath := filepath.Dir(path)
+		parentPath := normalizeWorkflowPath(filepath.Dir(path))
 		if parentPath == "." || parentPath == path {
 			continue
 		}

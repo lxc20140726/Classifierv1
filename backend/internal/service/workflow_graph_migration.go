@@ -166,6 +166,9 @@ func normalizeWorkflowGraphJSON(def *repository.WorkflowDefinition) (string, boo
 	if normalizeBuiltinDefaultProcessingGraph(def, &graph) {
 		changed = true
 	}
+	if normalizeBuiltinGenericProcessingGraph(def, &graph) {
+		changed = true
+	}
 
 	if !changed {
 		return raw, false, nil
@@ -250,6 +253,62 @@ func normalizeBuiltinDefaultProcessingGraph(def *repository.WorkflowDefinition, 
 		changed = true
 	}
 	if removeWorkflowGraphEdge(graph, "p-thumbnail", "items", "p-rename", "items") {
+		changed = true
+	}
+
+	return changed
+}
+
+func normalizeBuiltinGenericProcessingGraph(def *repository.WorkflowDefinition, graph *repository.WorkflowGraph) bool {
+	if def == nil || graph == nil {
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(def.Name), "通用处理流程") {
+		return false
+	}
+
+	nodeIndexByID := map[string]int{}
+	for index := range graph.Nodes {
+		nodeIndexByID[graph.Nodes[index].ID] = index
+	}
+
+	if _, ok := nodeIndexByID["g-mixed-router"]; !ok {
+		return false
+	}
+	if _, ok := nodeIndexByID["g-collect"]; !ok {
+		return false
+	}
+
+	changed := false
+	otherIndex, ok := nodeIndexByID["g-rename-mixed-other"]
+	if !ok {
+		graph.Nodes = append(graph.Nodes, repository.WorkflowGraphNode{
+			ID:   "g-rename-mixed-other",
+			Type: "rename-node",
+			Config: map[string]any{
+				"strategy": "template",
+				"template": "{name}",
+			},
+			Inputs: map[string]repository.NodeInputSpec{
+				"items": {LinkSource: &repository.NodeLinkSource{SourceNodeID: "g-mixed-router", SourcePort: "unsupported"}},
+			},
+			Enabled: true,
+		})
+		otherIndex = len(graph.Nodes) - 1
+		nodeIndexByID["g-rename-mixed-other"] = otherIndex
+		changed = true
+	}
+
+	if setWorkflowNodeInputLink(&graph.Nodes[otherIndex], "items", "g-mixed-router", "unsupported") {
+		changed = true
+	}
+	if setWorkflowNodeInputLink(&graph.Nodes[nodeIndexByID["g-collect"]], "items_7", "g-rename-mixed-other", "items") {
+		changed = true
+	}
+	if ensureWorkflowGraphEdge(graph, "e-mixed-router-rename-other", "g-mixed-router", "unsupported", "g-rename-mixed-other", "items") {
+		changed = true
+	}
+	if ensureWorkflowGraphEdge(graph, "e-rename-mixed-other-collect", "g-rename-mixed-other", "items", "g-collect", "items_7") {
 		changed = true
 	}
 

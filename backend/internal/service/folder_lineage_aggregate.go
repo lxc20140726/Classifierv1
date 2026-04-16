@@ -604,6 +604,15 @@ func resolveLineageFlowSourceFileIDs(
 		return sourceFileIDs, false
 	}
 
+	if sourceFileIDs := resolveLineageFlowInternalStageSourceFileIDs(
+		sourceFileIDByPath,
+		sourceFileIDByRelativePath,
+		normalizedSourcePath,
+		normalizedRelativePath,
+	); len(sourceFileIDs) > 0 {
+		return sourceFileIDs, false
+	}
+
 	if normalizedSourcePath == "" {
 		return nil, false
 	}
@@ -614,6 +623,53 @@ func resolveLineageFlowSourceFileIDs(
 	}
 
 	return descendantIDs, false
+}
+
+func resolveLineageFlowInternalStageSourceFileIDs(
+	sourceFileIDByPath map[string]string,
+	sourceFileIDByRelativePath map[string]string,
+	sourcePaths ...string,
+) []string {
+	for _, sourcePath := range sourcePaths {
+		for _, candidate := range lineageFlowInternalStageSourceCandidates(sourcePath) {
+			if sourceFileID := sourceFileIDByPath[candidate]; sourceFileID != "" {
+				return []string{sourceFileID}
+			}
+			if sourceFileID := sourceFileIDByRelativePath[candidate]; sourceFileID != "" {
+				return []string{sourceFileID}
+			}
+		}
+	}
+	return nil
+}
+
+func lineageFlowInternalStageSourceCandidates(sourcePath string) []string {
+	normalizedPath := normalizeLineagePath(sourcePath)
+	if normalizedPath == "" {
+		return nil
+	}
+
+	parts := strings.Split(normalizedPath, "/")
+	candidates := make([]string, 0, 2)
+	for index, part := range parts {
+		if !mixedLeafRouterIsInternalStagingDir(part) || index >= len(parts)-1 {
+			continue
+		}
+
+		stripped := make([]string, 0, len(parts)-1)
+		stripped = append(stripped, parts[:index]...)
+		stripped = append(stripped, parts[index+1:]...)
+		candidates = append(candidates, strings.Join(stripped, "/"))
+
+		fileName := parts[len(parts)-1]
+		if strings.Contains(fileName, "__") {
+			decoded := append([]string{}, parts[:index]...)
+			decoded = append(decoded, strings.Split(fileName, "__")...)
+			candidates = append(candidates, strings.Join(decoded, "/"))
+		}
+	}
+
+	return candidates
 }
 
 func collectLineageDescendantSourceFileIDs(

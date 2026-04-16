@@ -1351,3 +1351,72 @@ func TestFolderLineageServiceAggregatesRelatedWorkflowFoldersForRootLineage(t *t
 		t.Fatalf("aggregated timeline missing related workflow move event: %#v", resp.Timeline)
 	}
 }
+
+func TestFolderLineageFlowResolvesMixedLeafInternalStageSources(t *testing.T) {
+	t.Parallel()
+
+	flow, _, score := buildFolderLineageFlow(
+		[]*repository.FolderSourceManifest{
+			{
+				ID:           "sm-video",
+				FolderID:     "f1",
+				BatchID:      "b1",
+				SourcePath:   "/scan/album/clip.mp4",
+				RelativePath: "clip.mp4",
+				FileName:     "clip.mp4",
+				SizeBytes:    100,
+			},
+			{
+				ID:           "sm-other",
+				FolderID:     "f1",
+				BatchID:      "b1",
+				SourcePath:   "/scan/album/note.txt",
+				RelativePath: "note.txt",
+				FileName:     "note.txt",
+				SizeBytes:    20,
+			},
+		},
+		[]*repository.FolderOutputMapping{
+			{
+				ID:                 "map-video",
+				WorkflowRunID:      "wr-1",
+				FolderID:           "f1",
+				SourcePath:         "/scan/album/__video/clip.mp4",
+				SourceRelativePath: "__video/clip.mp4",
+				OutputPath:         "/target/mixed/album/clip.mp4",
+				NodeType:           "move-node",
+				ArtifactType:       "primary",
+				CreatedAt:          testLineageTime(2),
+			},
+			{
+				ID:                 "map-other",
+				WorkflowRunID:      "wr-1",
+				FolderID:           "f1",
+				SourcePath:         "/scan/album/__unsupported/note.txt",
+				SourceRelativePath: "__unsupported/note.txt",
+				OutputPath:         "/target/mixed/album/note.txt",
+				NodeType:           "move-node",
+				ArtifactType:       "primary",
+				CreatedAt:          testLineageTime(2),
+			},
+		},
+		nil,
+	)
+	if flow == nil {
+		t.Fatalf("flow should not be nil")
+	}
+	if score != 2 {
+		t.Fatalf("flow score = %d, want 2", score)
+	}
+
+	sourceByTarget := map[string]string{}
+	for _, link := range flow.Links {
+		sourceByTarget[link.TargetFileID] = link.SourceFileID
+	}
+	if sourceByTarget["map-video"] != "sm-video" {
+		t.Fatalf("video target source = %q, want sm-video", sourceByTarget["map-video"])
+	}
+	if sourceByTarget["map-other"] != "sm-other" {
+		t.Fatalf("other target source = %q, want sm-other", sourceByTarget["map-other"])
+	}
+}
