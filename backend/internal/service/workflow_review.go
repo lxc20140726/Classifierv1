@@ -119,6 +119,11 @@ func (s *WorkflowRunnerService) ApproveAllPendingProcessingReviews(ctx context.C
 	}
 
 	if approved == 0 {
+		if len(reviews) > 0 {
+			if err := s.refreshReviewDrivenRunStatus(ctx, workflowRunID); err != nil {
+				return 0, fmt.Errorf("workflowRunner.ApproveAllPendingProcessingReviews refresh run status: %w", err)
+			}
+		}
 		return 0, nil
 	}
 	if err := s.refreshReviewDrivenRunStatus(ctx, workflowRunID); err != nil {
@@ -153,6 +158,11 @@ func (s *WorkflowRunnerService) RollbackAllPendingProcessingReviews(ctx context.
 	}
 
 	if rolledBack == 0 {
+		if len(reviews) > 0 {
+			if err := s.refreshReviewDrivenRunStatus(ctx, workflowRunID); err != nil {
+				return 0, fmt.Errorf("workflowRunner.RollbackAllPendingProcessingReviews refresh run status: %w", err)
+			}
+		}
 		return 0, nil
 	}
 	if err := s.refreshReviewDrivenRunStatus(ctx, workflowRunID); err != nil {

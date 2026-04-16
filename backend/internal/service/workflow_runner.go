@@ -820,6 +820,7 @@ func (s *WorkflowRunnerService) executeWorkflowNode(
 	if s.manifestSvc != nil {
 		if _, processingNode := processingStatusDrivenNodeTypes[strings.TrimSpace(node.Type)]; processingNode {
 			inputItems, _ := categoryRouterExtractItems(inputs)
+			inputItems = workflowRunSourceManifestItems(run, inputItems)
 			if err := s.manifestSvc.EnsureForWorkflowRun(ctx, run.ID, inputItems); err != nil {
 				reason := withErrorCode("manifest_snapshot_missing", fmt.Sprintf("freeze source manifest for node %q: %v", node.ID, err))
 				_ = s.markWorkflowRunFailed(ctx, run.ID, node.ID, reason)
@@ -1098,6 +1099,28 @@ func (s *WorkflowRunnerService) executeWorkflowNode(
 	s.publishFolderClassificationUpdated(ctx, run, "classifying", node.ID, node.Type, "")
 
 	return nodeExecutionResult{}
+}
+
+func workflowRunSourceManifestItems(run *repository.WorkflowRun, items []ProcessingItem) []ProcessingItem {
+	if run == nil || strings.TrimSpace(run.FolderID) == "" || len(items) == 0 {
+		return items
+	}
+
+	fallbackFolderID := strings.TrimSpace(run.FolderID)
+	out := make([]ProcessingItem, len(items))
+	changed := false
+	for index, item := range items {
+		out[index] = item
+		if strings.TrimSpace(out[index].FolderID) != "" {
+			continue
+		}
+		out[index].FolderID = fallbackFolderID
+		changed = true
+	}
+	if !changed {
+		return items
+	}
+	return out
 }
 
 func (s *WorkflowRunnerService) getRuntimeAppConfig(ctx context.Context) *repository.AppConfig {

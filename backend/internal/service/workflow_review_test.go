@@ -1121,3 +1121,95 @@ func TestWorkflowRunnerServiceRollbackAllPendingProcessingReviews(t *testing.T) 
 		t.Fatalf("rolled_back audit logs = %d, want 2", len(logs))
 	}
 }
+
+func TestWorkflowRunnerServiceApproveAllPendingProcessingReviewsRefreshesApprovedRun(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	database := newServiceTestDB(t)
+	jobRepo := repository.NewJobRepository(database)
+	folderRepo := repository.NewFolderRepository(database)
+	workflowRunRepo := repository.NewWorkflowRunRepository(database)
+	reviewRepo := repository.NewProcessingReviewRepository(database)
+
+	folder := &repository.Folder{
+		ID:             "folder-review-batch-refresh-approved",
+		Path:           "/source/review-batch-refresh-approved",
+		SourceDir:      "/source",
+		RelativePath:   "review-batch-refresh-approved",
+		Name:           "review-batch-refresh-approved",
+		Category:       "photo",
+		CategorySource: "workflow",
+		Status:         "pending",
+	}
+	if err := folderRepo.Upsert(ctx, folder); err != nil {
+		t.Fatalf("folderRepo.Upsert() error = %v", err)
+	}
+
+	job := &repository.Job{
+		ID:            "job-review-batch-refresh-approved",
+		Type:          "workflow",
+		WorkflowDefID: "wf-review-batch-refresh-approved",
+		Status:        "waiting_input",
+		FolderIDs:     `["folder-review-batch-refresh-approved"]`,
+		Total:         1,
+	}
+	if err := jobRepo.Create(ctx, job); err != nil {
+		t.Fatalf("jobRepo.Create() error = %v", err)
+	}
+
+	run := &repository.WorkflowRun{
+		ID:            "run-review-batch-refresh-approved",
+		JobID:         job.ID,
+		FolderID:      folder.ID,
+		WorkflowDefID: job.WorkflowDefID,
+		Status:        "succeeded",
+	}
+	if err := workflowRunRepo.Create(ctx, run); err != nil {
+		t.Fatalf("workflowRunRepo.Create() error = %v", err)
+	}
+	reviewedAt := time.Now().Add(-time.Minute)
+	if err := reviewRepo.Create(ctx, &repository.ProcessingReviewItem{
+		ID:            "review-batch-refresh-approved",
+		WorkflowRunID: run.ID,
+		JobID:         job.ID,
+		FolderID:      folder.ID,
+		Status:        "approved",
+		ReviewedAt:    &reviewedAt,
+	}); err != nil {
+		t.Fatalf("reviewRepo.Create() error = %v", err)
+	}
+
+	svc := NewWorkflowRunnerService(
+		jobRepo,
+		folderRepo,
+		repository.NewSnapshotRepository(database),
+		repository.NewWorkflowDefinitionRepository(database),
+		workflowRunRepo,
+		repository.NewNodeRunRepository(database),
+		repository.NewNodeSnapshotRepository(database),
+		fs.NewMockAdapter(),
+		nil,
+		nil,
+	)
+	svc.SetProcessingReviewRepository(reviewRepo)
+
+	approved, err := svc.ApproveAllPendingProcessingReviews(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("ApproveAllPendingProcessingReviews() error = %v", err)
+	}
+	if approved != 0 {
+		t.Fatalf("approved = %d, want 0", approved)
+	}
+
+	updatedJob, err := jobRepo.GetByID(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("jobRepo.GetByID() error = %v", err)
+	}
+	if updatedJob.Status != "succeeded" {
+		t.Fatalf("job status = %q, want succeeded", updatedJob.Status)
+	}
+	if updatedJob.Done != 1 {
+		t.Fatalf("job done = %d, want 1", updatedJob.Done)
+	}
+}

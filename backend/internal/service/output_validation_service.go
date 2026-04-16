@@ -201,7 +201,7 @@ func (s *OutputValidationService) validateAndPersistCheck(
 		return nil, fmt.Errorf("outputValidation.validateAndPersistCheck get app config: %w", err)
 	}
 
-	allowedOutputDirs := outputValidationAllowedDirsByCategory(appConfig, folder.Category)
+	allowedOutputDirs := outputValidationAllowedDirs(appConfig)
 	allowedOutputDirSet := make(map[string]struct{}, len(allowedOutputDirs))
 	for _, outputDir := range allowedOutputDirs {
 		allowedOutputDirSet[outputValidationNormalizeForCompare(outputDir)] = struct{}{}
@@ -251,7 +251,7 @@ func (s *OutputValidationService) validateAndPersistCheck(
 				addError("output_not_found", "mapped output file does not exist", sourcePath, outputPath, mapping.NodeType)
 			}
 			if !outputValidationPathAllowed(outputPath, allowedOutputDirSet) {
-				addError("output_dir_mismatch", "mapped output path is outside configured category output directories", sourcePath, outputPath, mapping.NodeType)
+				addError("output_dir_mismatch", "mapped output path is outside configured output directories", sourcePath, outputPath, mapping.NodeType)
 			}
 		}
 		if !mappedAnyExisting {
@@ -406,23 +406,24 @@ func outputValidationManifestRelativePath(
 	return relativePath, true
 }
 
-func outputValidationAllowedDirsByCategory(config *repository.AppConfig, category string) []string {
+func outputValidationAllowedDirs(config *repository.AppConfig) []string {
 	if config == nil {
 		return nil
 	}
 
-	switch strings.ToLower(strings.TrimSpace(category)) {
-	case "video":
-		return append([]string(nil), config.OutputDirs.Video...)
-	case "photo":
-		return append([]string(nil), config.OutputDirs.Photo...)
-	case "manga":
-		return append([]string(nil), config.OutputDirs.Manga...)
-	case "mixed":
-		return append([]string(nil), config.OutputDirs.Mixed...)
-	default:
-		return append([]string(nil), config.OutputDirs.Other...)
-	}
+	out := make([]string, 0,
+		len(config.OutputDirs.Video)+
+			len(config.OutputDirs.Photo)+
+			len(config.OutputDirs.Manga)+
+			len(config.OutputDirs.Mixed)+
+			len(config.OutputDirs.Other),
+	)
+	out = append(out, config.OutputDirs.Video...)
+	out = append(out, config.OutputDirs.Photo...)
+	out = append(out, config.OutputDirs.Manga...)
+	out = append(out, config.OutputDirs.Mixed...)
+	out = append(out, config.OutputDirs.Other...)
+	return out
 }
 
 func outputValidationPathAllowed(outputPath string, allowedOutputDirSet map[string]struct{}) bool {

@@ -76,18 +76,21 @@ func (s *OutputMappingService) Build(ctx context.Context, workflowRunID string) 
 		folderPathMap := outputMappingFolderPathMap(items)
 
 		for _, step := range stepResults {
-			if err := outputMappingValidateStepContract(nodeRun, step); err != nil {
-				return err
-			}
-
 			targetPath := normalizeWorkflowPath(step.TargetPath)
 			sourcePath := normalizeWorkflowPath(step.SourcePath)
 			folderID := outputMappingResolveFolderID(items, step, folderPathMap)
 			if folderID == "" {
+				folderID = strings.TrimSpace(run.FolderID)
+			}
+			nodeType := outputMappingStepNodeType(nodeRun, step)
+			if folderID == "" {
 				return fmt.Errorf("output_protocol_invalid: node run %q step result has no resolvable folder_id (source_path=%q,target_path=%q)", nodeRun.ID, step.SourcePath, step.TargetPath)
 			}
+			if err := outputMappingValidateStepContract(nodeRun, step, nodeType); err != nil {
+				return err
+			}
 
-			artifactType, requiredArtifact := outputMappingArtifactType(step.NodeType)
+			artifactType, requiredArtifact := outputMappingArtifactType(nodeType)
 			sourceRelativePath := outputMappingSourceRelativePath(ctx, s.folders, folderID, sourcePath)
 			outputContainer := normalizeWorkflowPath(filepath.Dir(targetPath))
 
@@ -95,7 +98,7 @@ func (s *OutputMappingService) Build(ctx context.Context, workflowRunID string) 
 				folderID,
 				sourcePath,
 				targetPath,
-				strings.TrimSpace(step.NodeType),
+				nodeType,
 				artifactType,
 			}, "|")
 			if _, exists := seen[key]; exists {
@@ -111,7 +114,7 @@ func (s *OutputMappingService) Build(ctx context.Context, workflowRunID string) 
 				SourceRelativePath: sourceRelativePath,
 				OutputPath:         targetPath,
 				OutputContainer:    outputContainer,
-				NodeType:           strings.TrimSpace(step.NodeType),
+				NodeType:           nodeType,
 				ArtifactType:       artifactType,
 				RequiredArtifact:   requiredArtifact,
 			})
@@ -182,16 +185,17 @@ func outputMappingResolveFolderID(
 	return ""
 }
 
-func outputMappingValidateStepContract(nodeRun *repository.NodeRun, step ProcessingStepResult) error {
+func outputMappingStepNodeType(nodeRun *repository.NodeRun, step ProcessingStepResult) string {
 	nodeType := strings.TrimSpace(step.NodeType)
 	if nodeType == "" {
 		nodeType = strings.TrimSpace(nodeRun.NodeType)
 	}
+	return nodeType
+}
+
+func outputMappingValidateStepContract(nodeRun *repository.NodeRun, step ProcessingStepResult, nodeType string) error {
 	if nodeType == "" {
 		return fmt.Errorf("output_protocol_invalid: node run %q step result missing node_type", nodeRun.ID)
-	}
-	if strings.TrimSpace(step.FolderID) == "" {
-		return fmt.Errorf("output_protocol_invalid: node run %q step result missing folder_id", nodeRun.ID)
 	}
 
 	switch nodeType {

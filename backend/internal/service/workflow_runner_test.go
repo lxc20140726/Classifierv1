@@ -222,6 +222,27 @@ func (s *stubCompletionUpdater) MarkPending(_ context.Context, folderID string) 
 	return nil
 }
 
+func TestWorkflowRunSourceManifestItemsFallsBackToRunFolderID(t *testing.T) {
+	t.Parallel()
+
+	run := &repository.WorkflowRun{ID: "run-manifest-fallback", FolderID: "folder-root"}
+	items := []ProcessingItem{
+		{SourcePath: "/source/root/__photo/a.jpg", CurrentPath: "/source/root/__photo/a.jpg", Category: "photo"},
+		{FolderID: "folder-child", SourcePath: "/source/root/video", Category: "video"},
+	}
+
+	got := workflowRunSourceManifestItems(run, items)
+	if got[0].FolderID != "folder-root" {
+		t.Fatalf("got[0].FolderID = %q, want folder-root", got[0].FolderID)
+	}
+	if got[1].FolderID != "folder-child" {
+		t.Fatalf("got[1].FolderID = %q, want folder-child", got[1].FolderID)
+	}
+	if items[0].FolderID != "" {
+		t.Fatalf("input item was mutated: FolderID = %q", items[0].FolderID)
+	}
+}
+
 func (e *consumeInputExecutor) Type() string {
 	return "consume-input"
 }
@@ -2348,6 +2369,153 @@ func TestSyncFolderStatusesByWorkflowRunPartialBuildsMappingsWithoutValidation(t
 	}
 	if completion.markPendingCalls != 1 || completion.lastFolderID != folder.ID {
 		t.Fatalf("completion mark_pending calls/folder = %d/%q, want 1/%q", completion.markPendingCalls, completion.lastFolderID, folder.ID)
+	}
+}
+
+func TestSyncFolderStatusesByWorkflowRunSucceededMarksFolderDoneAfterOutputCheck(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	database := newServiceTestDB(t)
+	jobRepo := repository.NewJobRepository(database)
+	folderRepo := repository.NewFolderRepository(database)
+	configRepo := repository.NewConfigRepository(database)
+	workflowDefRepo := repository.NewWorkflowDefinitionRepository(database)
+	workflowRunRepo := repository.NewWorkflowRunRepository(database)
+	nodeRunRepo := repository.NewNodeRunRepository(database)
+	nodeSnapshotRepo := repository.NewNodeSnapshotRepository(database)
+	sourceManifestRepo := repository.NewSourceManifestRepository(database)
+	outputMappingRepo := repository.NewOutputMappingRepository(database)
+	outputCheckRepo := repository.NewOutputCheckRepository(database)
+	adapter := fs.NewMockAdapter()
+
+	if err := configRepo.SaveAppConfig(ctx, &repository.AppConfig{
+		Version: 1,
+		OutputDirs: repository.AppConfigOutputDirs{
+			Video: []string{"/target/video"},
+			Mixed: []string{"/target/mixed"},
+		},
+	}); err != nil {
+		t.Fatalf("configRepo.SaveAppConfig() error = %v", err)
+	}
+
+	folder := &repository.Folder{
+		ID:             "folder-output-pipeline-done",
+		Path:           "/source/video-season",
+		SourceDir:      "/source",
+		RelativePath:   "video-season",
+		Name:           "video-season",
+		Category:       "video",
+		CategorySource: "workflow",
+		Status:         "pending",
+	}
+	if err := folderRepo.Upsert(ctx, folder); err != nil {
+		t.Fatalf("folderRepo.Upsert() error = %v", err)
+	}
+
+	job := &repository.Job{
+		ID:            "job-output-pipeline-done",
+		Type:          "workflow",
+		WorkflowDefID: "wf-output-pipeline-done",
+		Status:        "running",
+		FolderIDs:     `["folder-output-pipeline-done"]`,
+		Total:         1,
+	}
+	if err := jobRepo.Create(ctx, job); err != nil {
+		t.Fatalf("jobRepo.Create() error = %v", err)
+	}
+
+	run := &repository.WorkflowRun{
+		ID:            "run-output-pipeline-done",
+		JobID:         job.ID,
+		WorkflowDefID: job.WorkflowDefID,
+		FolderID:      folder.ID,
+		Status:        "running",
+	}
+	if err := workflowRunRepo.Create(ctx, run); err != nil {
+		t.Fatalf("workflowRunRepo.Create() error = %v", err)
+	}
+
+	if err := sourceManifestRepo.CreateBatchForWorkflowRun(ctx, run.ID, folder.ID, "batch-output-pipeline-done", []*repository.FolderSourceManifest{{
+		ID:            "manifest-output-pipeline-done",
+		WorkflowRunID: run.ID,
+		FolderID:      folder.ID,
+		BatchID:       "batch-output-pipeline-done",
+		SourcePath:    "/source/video-season/movie.mkv",
+		RelativePath:  "movie.mkv",
+		FileName:      "movie.mkv",
+		SizeBytes:     10,
+	}}); err != nil {
+		t.Fatalf("sourceManifestRepo.CreateBatchForWorkflowRun() error = %v", err)
+	}
+
+	outputJSON := mustJSONMarshal(t, mustTypedOutputsMap(t, map[string]TypedValue{
+		"items": {
+			Type: PortTypeProcessingItemList,
+			Value: []ProcessingItem{{
+				FolderID:    folder.ID,
+				SourcePath:  "/target/mixed/video-season",
+				CurrentPath: "/target/mixed/video-season",
+				FolderName:  "video-season",
+				Category:    "video",
+			}},
+		},
+		"step_results": {
+			Type: PortTypeProcessingStepResultList,
+			Value: []ProcessingStepResult{{
+				FolderID:   folder.ID,
+				SourcePath: "/source/video-season",
+				TargetPath: "/target/mixed/video-season",
+				NodeType:   phase4MoveNodeExecutorType,
+				Status:     "moved",
+			}},
+		},
+	}))
+	if err := nodeRunRepo.Create(ctx, &repository.NodeRun{
+		ID:            "node-run-output-pipeline-done",
+		WorkflowRunID: run.ID,
+		NodeID:        "move-video",
+		NodeType:      phase4MoveNodeExecutorType,
+		Sequence:      1,
+		Status:        "succeeded",
+		OutputJSON:    outputJSON,
+	}); err != nil {
+		t.Fatalf("nodeRunRepo.Create() error = %v", err)
+	}
+
+	adapter.AddFile("/target/mixed/video-season/movie.mkv", []byte("video"))
+
+	svc := NewWorkflowRunnerService(
+		jobRepo,
+		folderRepo,
+		repository.NewSnapshotRepository(database),
+		workflowDefRepo,
+		workflowRunRepo,
+		nodeRunRepo,
+		nodeSnapshotRepo,
+		adapter,
+		nil,
+		nil,
+	)
+	svc.SetOutputPipeline(
+		NewOutputMappingService(workflowRunRepo, nodeRunRepo, folderRepo, outputMappingRepo),
+		NewOutputValidationService(adapter, folderRepo, configRepo, sourceManifestRepo, outputMappingRepo, outputCheckRepo),
+		NewFolderCompletionService(folderRepo, outputCheckRepo),
+	)
+
+	if err := svc.syncFolderStatusesByWorkflowRun(ctx, run.ID, "succeeded"); err != nil {
+		t.Fatalf("syncFolderStatusesByWorkflowRun() error = %v", err)
+	}
+
+	updated, err := folderRepo.GetByID(ctx, folder.ID)
+	if err != nil {
+		t.Fatalf("folderRepo.GetByID() error = %v", err)
+	}
+	if updated.Status != "done" {
+		t.Fatalf("folder status = %q, want done", updated.Status)
+	}
+	if updated.OutputCheckSummary.Status != "passed" {
+		t.Fatalf("output_check_summary status = %q, want passed", updated.OutputCheckSummary.Status)
 	}
 }
 

@@ -107,6 +107,82 @@ func TestOutputValidationValidateFolderDirectoryMovePassesForNestedFiles(t *test
 	}
 }
 
+func TestOutputValidationAllowsConfiguredOutputDirAcrossCategories(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	database := newServiceTestDB(t)
+	folderRepo := repository.NewFolderRepository(database)
+	configRepo := repository.NewConfigRepository(database)
+	manifestRepo := repository.NewSourceManifestRepository(database)
+	mappingRepo := repository.NewOutputMappingRepository(database)
+	outputCheckRepo := repository.NewOutputCheckRepository(database)
+	adapter := fs.NewMockAdapter()
+
+	if err := configRepo.SaveAppConfig(ctx, &repository.AppConfig{
+		Version: 1,
+		OutputDirs: repository.AppConfigOutputDirs{
+			Video: []string{"/target/video"},
+			Mixed: []string{"/target/mixed"},
+		},
+	}); err != nil {
+		t.Fatalf("configRepo.SaveAppConfig() error = %v", err)
+	}
+
+	folder := &repository.Folder{
+		ID:             "folder-output-validation-cross-category",
+		Path:           "/source/video-season",
+		SourceDir:      "/source",
+		RelativePath:   "video-season",
+		Name:           "video-season",
+		Category:       "video",
+		CategorySource: "workflow",
+		Status:         "pending",
+	}
+	if err := folderRepo.Upsert(ctx, folder); err != nil {
+		t.Fatalf("folderRepo.Upsert() error = %v", err)
+	}
+
+	if err := manifestRepo.CreateBatchForWorkflowRun(ctx, "wr-output-validation-cross-category", folder.ID, "batch-1", []*repository.FolderSourceManifest{{
+		ID:            "manifest-cross-category",
+		WorkflowRunID: "wr-output-validation-cross-category",
+		FolderID:      folder.ID,
+		BatchID:       "batch-1",
+		SourcePath:    "/source/video-season/movie.mkv",
+		RelativePath:  "movie.mkv",
+		FileName:      "movie.mkv",
+		SizeBytes:     10,
+	}}); err != nil {
+		t.Fatalf("manifestRepo.CreateBatchForWorkflowRun() error = %v", err)
+	}
+
+	if err := mappingRepo.ReplaceByWorkflowRunID(ctx, "wr-output-validation-cross-category", []*repository.FolderOutputMapping{{
+		ID:               "mapping-cross-category",
+		WorkflowRunID:    "wr-output-validation-cross-category",
+		FolderID:         folder.ID,
+		SourcePath:       "/source/video-season",
+		OutputPath:       "/target/mixed/video-season",
+		OutputContainer:  "/target/mixed",
+		NodeType:         "move-node",
+		ArtifactType:     "primary",
+		RequiredArtifact: false,
+	}}); err != nil {
+		t.Fatalf("mappingRepo.ReplaceByWorkflowRunID() error = %v", err)
+	}
+
+	adapter.AddFile("/target/mixed/video-season/movie.mkv", []byte("video"))
+
+	svc := NewOutputValidationService(adapter, folderRepo, configRepo, manifestRepo, mappingRepo, outputCheckRepo)
+
+	check, err := svc.ValidateFolder(ctx, folder.ID)
+	if err != nil {
+		t.Fatalf("ValidateFolder() error = %v", err)
+	}
+	if check.Status != "passed" {
+		t.Fatalf("check.Status = %q, want passed (errors=%+v)", check.Status, check.Errors)
+	}
+}
+
 func TestOutputValidationCanMarkDoneRevalidatesStaleSummary(t *testing.T) {
 	t.Parallel()
 
