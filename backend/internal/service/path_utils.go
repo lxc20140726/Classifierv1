@@ -11,11 +11,8 @@ func normalizeWorkflowPath(path string) string {
 		return ""
 	}
 
-	cleaned := filepath.Clean(trimmed)
-	if filepath.VolumeName(cleaned) != "" {
-		return cleaned
-	}
-
+	normalizedSeparators := strings.ReplaceAll(trimmed, "\\", "/")
+	cleaned := filepath.Clean(normalizedSeparators)
 	return filepath.ToSlash(cleaned)
 }
 

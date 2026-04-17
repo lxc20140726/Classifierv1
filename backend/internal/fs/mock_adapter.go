@@ -281,5 +281,6 @@ func normalizePath(path string) string {
 		return ""
 	}
 
-	return filepath.ToSlash(filepath.Clean(trimmed))
+	normalizedSeparators := strings.ReplaceAll(trimmed, "\\", "/")
+	return filepath.ToSlash(filepath.Clean(normalizedSeparators))
 }

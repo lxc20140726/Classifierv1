@@ -1,6 +1,7 @@
 package service
 
 import (
+	"archive/zip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1257,6 +1258,64 @@ func TestMoveNodeExecutorMergeValidationAndArchiveFlatten(t *testing.T) {
 			t.Fatalf("merged output missing %q", filepath.Join(targetRoot, "BEJEAN ON LINE Kaede Matsushima 2004.12 Hassya[51P].cbz"))
 		}
 	})
+
+	t.Run("windows_style_sibling_archive_roots_fallback_to_common_parent_root", func(t *testing.T) {
+		t.Parallel()
+
+		adapter := fs.NewMockAdapter()
+		sourceRoot := `E:\TEST\示例\松岛枫 (松島かえで)[1982.11.17]11`
+		rootPathA := sourceRoot + `\@Misty Kaede Matsushima[120P]`
+		rootPathB := sourceRoot + `\BEJEAN ON LINE Kaede Matsushima 2004.12 Hassya[51P]`
+		archivePathA := `E:\TEST\archive\@Misty Kaede Matsushima[120P].cbz`
+		archivePathB := `E:\TEST\archive\BEJEAN ON LINE Kaede Matsushima 2004.12 Hassya[51P].cbz`
+		targetDir := `E:\TEST\photo`
+		adapter.AddFile(archivePathA, []byte("a"))
+		adapter.AddFile(archivePathB, []byte("b"))
+
+		executor := newPhase4MoveNodeExecutor(adapter, nil)
+		_, err := executor.Execute(context.Background(), NodeExecutionInput{
+			Node: repository.WorkflowGraphNode{Config: map[string]any{
+				"target_dir": targetDir,
+			}},
+			Inputs: testInputs(map[string]any{"items": []ProcessingItem{
+				{
+					SourcePath:         rootPathA,
+					CurrentPath:        archivePathA,
+					RootPath:           rootPathA,
+					SourceKind:         ProcessingItemSourceKindArchive,
+					OriginalSourcePath: rootPathA,
+					FolderName:         filepath.Base(normalizeWorkflowPath(archivePathA)),
+					TargetName:         filepath.Base(normalizeWorkflowPath(archivePathA)),
+				},
+				{
+					SourcePath:         rootPathB,
+					CurrentPath:        archivePathB,
+					RootPath:           rootPathB,
+					SourceKind:         ProcessingItemSourceKindArchive,
+					OriginalSourcePath: rootPathB,
+					FolderName:         filepath.Base(normalizeWorkflowPath(archivePathB)),
+					TargetName:         filepath.Base(normalizeWorkflowPath(archivePathB)),
+				},
+			}}),
+		})
+		if err != nil {
+			t.Fatalf("Execute() error = %v", err)
+		}
+
+		targetRoot := normalizeWorkflowPath(targetDir + `/` + filepath.Base(normalizeWorkflowPath(sourceRoot)))
+		for _, name := range []string{
+			"@Misty Kaede Matsushima[120P].cbz",
+			"BEJEAN ON LINE Kaede Matsushima 2004.12 Hassya[51P].cbz",
+		} {
+			exists, err := adapter.Exists(context.Background(), joinWorkflowPath(targetRoot, name))
+			if err != nil {
+				t.Fatalf("Exists() error = %v", err)
+			}
+			if !exists {
+				t.Fatalf("moved archive %q should exist under %q", name, targetRoot)
+			}
+		}
+	})
 }
 
 func TestCompressNodeExecutorUnsupportedAndArchiveNaming(t *testing.T) {
@@ -1465,8 +1524,202 @@ func TestCompressNodeExecutorOutputsArchiveItemsAndCompatibility(t *testing.T) {
 	}
 }
 
+func TestCompressNodeExecutorIncludesUppercaseImagesAndRejectsEmptyArchives(t *testing.T) {
+	t.Parallel()
+
+	t.Run("uppercase_image_extensions_are_included", func(t *testing.T) {
+		t.Parallel()
+
+		root := t.TempDir()
+		sourcePath := filepath.Join(root, "source", "album")
+		archiveDir := filepath.Join(root, "archives")
+		mustMkdirAll(t, sourcePath)
+		if err := os.WriteFile(filepath.Join(sourcePath, "001.JPG"), []byte("img"), 0o644); err != nil {
+			t.Fatalf("os.WriteFile(source) error = %v", err)
+		}
+
+		out, err := newCompressNodeExecutor(fs.NewOSAdapter()).Execute(context.Background(), NodeExecutionInput{
+			Node: repository.WorkflowGraphNode{
+				Type: "compress-node",
+				Config: map[string]any{
+					"target_dir": archiveDir,
+					"format":     "zip",
+				},
+			},
+			Inputs: testInputs(map[string]any{
+				"items": []ProcessingItem{{SourcePath: sourcePath, RootPath: sourcePath, SourceKind: ProcessingItemSourceKindDirectory}},
+			}),
+		})
+		if err != nil {
+			t.Fatalf("Execute() error = %v", err)
+		}
+
+		archiveItems := out.Outputs["archive_items"].Value.([]ProcessingItem)
+		if len(archiveItems) != 1 {
+			t.Fatalf("len(archive_items) = %d, want 1", len(archiveItems))
+		}
+		reader, err := zip.OpenReader(archiveItems[0].CurrentPath)
+		if err != nil {
+			t.Fatalf("zip.OpenReader(%q) error = %v", archiveItems[0].CurrentPath, err)
+		}
+		defer reader.Close()
+
+		if len(reader.File) != 1 || reader.File[0].Name != "001.JPG" {
+			names := make([]string, 0, len(reader.File))
+			for _, file := range reader.File {
+				names = append(names, file.Name)
+			}
+			t.Fatalf("archive entries = %v, want [001.JPG]", names)
+		}
+	})
+
+	t.Run("empty_archive_is_error_and_partial_file_is_removed", func(t *testing.T) {
+		t.Parallel()
+
+		root := t.TempDir()
+		sourcePath := filepath.Join(root, "source", "album")
+		archiveDir := filepath.Join(root, "archives")
+		mustMkdirAll(t, sourcePath)
+		if err := os.WriteFile(filepath.Join(sourcePath, "notes.txt"), []byte("note"), 0o644); err != nil {
+			t.Fatalf("os.WriteFile(source) error = %v", err)
+		}
+
+		_, err := newCompressNodeExecutor(fs.NewOSAdapter()).Execute(context.Background(), NodeExecutionInput{
+			Node: repository.WorkflowGraphNode{
+				Type: "compress-node",
+				Config: map[string]any{
+					"target_dir": archiveDir,
+					"format":     "zip",
+				},
+			},
+			Inputs: testInputs(map[string]any{
+				"items": []ProcessingItem{{SourcePath: sourcePath, FolderName: "album", TargetName: "album"}},
+			}),
+		})
+		if err == nil {
+			t.Fatalf("Execute() error = nil, want no matched files error")
+		}
+		if !stringsContains(err.Error(), "no files matched include_patterns") {
+			t.Fatalf("error = %q, want no files matched include_patterns", err.Error())
+		}
+		if pathExists(t, filepath.Join(archiveDir, "album.zip")) {
+			t.Fatalf("partial archive should be removed")
+		}
+	})
+}
+
 func TestCompressNodeIntegrationArchiveItemsAndLegacyItems(t *testing.T) {
 	t.Parallel()
+
+	t.Run("mixed_leaf_photo_archives_move_under_common_parent", func(t *testing.T) {
+		t.Parallel()
+
+		root := t.TempDir()
+		sourceRoot := filepath.Join(root, "source", "Kaede Matsushima [1982.11.17]")
+		mixedPathA := filepath.Join(sourceRoot, "@Misty Kaede Matsushima[120P]")
+		mixedPathB := filepath.Join(sourceRoot, "BEJEAN ON LINE Kaede Matsushima 2004.12 Hassya[51P]")
+		archiveDir := filepath.Join(root, "archives")
+		moveTargetDir := filepath.Join(root, "final")
+		mustMkdirAll(t, mixedPathA)
+		mustMkdirAll(t, mixedPathB)
+		if err := os.WriteFile(filepath.Join(mixedPathA, "001.JPG"), []byte("a"), 0o644); err != nil {
+			t.Fatalf("os.WriteFile(source A) error = %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(mixedPathB, "002.jpg"), []byte("b"), 0o644); err != nil {
+			t.Fatalf("os.WriteFile(source B) error = %v", err)
+		}
+
+		mixedOut, err := newMixedLeafRouterExecutor(fs.NewOSAdapter()).Execute(context.Background(), NodeExecutionInput{
+			Node: repository.WorkflowGraphNode{Type: "mixed-leaf-router"},
+			Inputs: testInputs(map[string]any{"items": []ProcessingItem{
+				{
+					SourcePath:  mixedPathA,
+					CurrentPath: mixedPathA,
+					RootPath:    sourceRoot,
+					Category:    "mixed",
+					FolderName:  filepath.Base(mixedPathA),
+					TargetName:  filepath.Base(mixedPathA),
+					SourceKind:  ProcessingItemSourceKindDirectory,
+				},
+				{
+					SourcePath:  mixedPathB,
+					CurrentPath: mixedPathB,
+					RootPath:    sourceRoot,
+					Category:    "mixed",
+					FolderName:  filepath.Base(mixedPathB),
+					TargetName:  filepath.Base(mixedPathB),
+					SourceKind:  ProcessingItemSourceKindDirectory,
+				},
+			}}),
+		})
+		if err != nil {
+			t.Fatalf("mixed leaf Execute() error = %v", err)
+		}
+		photoItems := mixedOut.Outputs[mixedLeafRouterPhotoPort].Value.([]ProcessingItem)
+		if len(photoItems) != 2 {
+			t.Fatalf("len(photoItems) = %d, want 2", len(photoItems))
+		}
+
+		compressOut, err := newCompressNodeExecutor(fs.NewOSAdapter()).Execute(context.Background(), NodeExecutionInput{
+			Node: repository.WorkflowGraphNode{
+				Type: "compress-node",
+				Config: map[string]any{
+					"target_dir": archiveDir,
+					"format":     "cbz",
+				},
+			},
+			Inputs: testInputs(map[string]any{"items": photoItems}),
+		})
+		if err != nil {
+			t.Fatalf("compress Execute() error = %v", err)
+		}
+
+		archiveItems := compressOut.Outputs["archive_items"].Value.([]ProcessingItem)
+		if len(archiveItems) != 2 {
+			t.Fatalf("len(archive_items) = %d, want 2", len(archiveItems))
+		}
+
+		moveOut, err := newPhase4MoveNodeExecutor(fs.NewOSAdapter(), nil).Execute(context.Background(), NodeExecutionInput{
+			Node: repository.WorkflowGraphNode{
+				Type:   "move-node",
+				Config: map[string]any{"target_dir": moveTargetDir},
+			},
+			Inputs: testInputs(map[string]any{"items": archiveItems}),
+		})
+		if err != nil {
+			t.Fatalf("move Execute() error = %v", err)
+		}
+
+		moveSteps := moveOut.Outputs["step_results"].Value.([]ProcessingStepResult)
+		if len(moveSteps) != 2 {
+			t.Fatalf("len(step_results) = %d, want 2", len(moveSteps))
+		}
+
+		targetRoot := filepath.Join(moveTargetDir, filepath.Base(sourceRoot))
+		targetA := filepath.Join(targetRoot, "@Misty Kaede Matsushima[120P].cbz")
+		targetB := filepath.Join(targetRoot, "BEJEAN ON LINE Kaede Matsushima 2004.12 Hassya[51P].cbz")
+		if !pathExists(t, targetA) || !pathExists(t, targetB) {
+			t.Fatalf("expected moved archives under %q", targetRoot)
+		}
+		for _, item := range archiveItems {
+			if pathExists(t, item.CurrentPath) {
+				t.Fatalf("staging archive %q should not remain after move", item.CurrentPath)
+			}
+		}
+
+		reader, err := zip.OpenReader(targetA)
+		if err != nil {
+			t.Fatalf("zip.OpenReader(%q) error = %v", targetA, err)
+		}
+		defer reader.Close()
+		if len(reader.File) != 1 || reader.File[0].Name != "001.JPG" {
+			names := make([]string, 0, len(reader.File))
+			for _, file := range reader.File {
+				names = append(names, file.Name)
+			}
+			t.Fatalf("target archive entries = %v, want [001.JPG]", names)
+		}
+	})
 
 	t.Run("archive_items_to_move_moves_archive_file", func(t *testing.T) {
 		t.Parallel()

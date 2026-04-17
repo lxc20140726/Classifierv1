@@ -6,6 +6,8 @@ import (
 	"errors"
 	"path/filepath"
 	"reflect"
+	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -187,6 +189,59 @@ func TestConfigRepositorySaveAppConfigRejectsInvalidValues(t *testing.T) {
 			t.Fatalf("OutputDirs.Video = %#v, want [/out/video /out/video-2]", got.OutputDirs.Video)
 		}
 	})
+}
+
+func TestConfigRepositorySaveAppConfigNormalizesNASContainerPaths(t *testing.T) {
+	t.Parallel()
+
+	database := newTestDB(t)
+	repo := NewConfigRepository(database)
+
+	err := repo.SaveAppConfig(context.Background(), &AppConfig{
+		ScanInputDirs: []string{`/12T\影视\写真`},
+		OutputDirs: AppConfigOutputDirs{
+			Video: []string{`/12T\整理\video`},
+			Photo: []string{`/tmp/zfsv3/sata14/18500000000/data\整理\photo`},
+		},
+	})
+	if err != nil {
+		t.Fatalf("SaveAppConfig() error = %v", err)
+	}
+
+	got, err := repo.GetAppConfig(context.Background())
+	if err != nil {
+		t.Fatalf("GetAppConfig() error = %v", err)
+	}
+	if !reflect.DeepEqual(got.ScanInputDirs, []string{"/12T/影视/写真"}) {
+		t.Fatalf("ScanInputDirs = %#v, want [/12T/影视/写真]", got.ScanInputDirs)
+	}
+	if !reflect.DeepEqual(got.OutputDirs.Video, []string{"/12T/整理/video"}) {
+		t.Fatalf("OutputDirs.Video = %#v, want [/12T/整理/video]", got.OutputDirs.Video)
+	}
+	if !reflect.DeepEqual(got.OutputDirs.Photo, []string{"/tmp/zfsv3/sata14/18500000000/data/整理/photo"}) {
+		t.Fatalf("OutputDirs.Photo = %#v, want normalized zfsv3 path", got.OutputDirs.Photo)
+	}
+}
+
+func TestConfigRepositorySaveAppConfigRejectsClientUNCPathOnLinux(t *testing.T) {
+	t.Parallel()
+
+	if runtime.GOOS == "windows" {
+		t.Skip("UNC path validation is Linux container specific")
+	}
+
+	database := newTestDB(t)
+	repo := NewConfigRepository(database)
+
+	err := repo.SaveAppConfig(context.Background(), &AppConfig{
+		ScanInputDirs: []string{`\\ZSPACE\share\影视`},
+	})
+	if !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("SaveAppConfig() error = %v, want ErrInvalidConfig", err)
+	}
+	if !strings.Contains(err.Error(), "Docker mounted container path") {
+		t.Fatalf("SaveAppConfig() error = %q, want container path hint", err.Error())
+	}
 }
 
 func TestConfigRepositoryEnsureAppConfig(t *testing.T) {

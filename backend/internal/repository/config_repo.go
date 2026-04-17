@@ -468,11 +468,16 @@ func normalizeOptionalAbsPath(raw string) (string, error) {
 		return "", nil
 	}
 
-	if !isAbsoluteConfigPath(trimmed) {
+	if isUNCConfigPath(trimmed) && runtime.GOOS != "windows" {
+		return "", fmt.Errorf("UNC paths are not accessible from the container; use the Docker mounted container path")
+	}
+
+	normalized := normalizeConfigPathSeparators(trimmed)
+	if !isAbsoluteConfigPath(normalized) {
 		return "", fmt.Errorf("path must be absolute")
 	}
 
-	return trimmed, nil
+	return normalized, nil
 }
 
 func isAbsoluteConfigPath(path string) bool {
@@ -484,6 +489,21 @@ func isAbsoluteConfigPath(path string) bool {
 	}
 
 	return false
+}
+
+func normalizeConfigPathSeparators(path string) string {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return ""
+	}
+
+	normalizedSeparators := strings.ReplaceAll(trimmed, "\\", "/")
+	return filepath.ToSlash(filepath.Clean(normalizedSeparators))
+}
+
+func isUNCConfigPath(path string) bool {
+	trimmed := strings.TrimSpace(path)
+	return strings.HasPrefix(trimmed, `\\`) || strings.HasPrefix(trimmed, "//")
 }
 
 type configValueSetter interface {

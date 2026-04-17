@@ -408,15 +408,32 @@ func (e *compressNodeExecutor) createArchive(ctx context.Context, sourceDir, arc
 	if err != nil {
 		return fmt.Errorf("open archive file %q: %w", archivePath, err)
 	}
-	defer fileWriter.Close()
 
 	archiveWriter := zip.NewWriter(fileWriter)
-	defer archiveWriter.Close()
+	success := false
+	defer func() {
+		if !success {
+			_ = archiveWriter.Close()
+			_ = fileWriter.Close()
+			_ = e.fs.Remove(ctx, archivePath)
+		}
+	}()
 
-	if err := e.walkAndArchive(ctx, sourceDir, sourceDir, archiveWriter, includePatterns, excludePatterns); err != nil {
+	written, err := e.walkAndArchive(ctx, sourceDir, sourceDir, archiveWriter, includePatterns, excludePatterns)
+	if err != nil {
 		return err
 	}
+	if written == 0 {
+		return fmt.Errorf("no files matched include_patterns in %q", sourceDir)
+	}
+	if err := archiveWriter.Close(); err != nil {
+		return fmt.Errorf("close archive writer %q: %w", archivePath, err)
+	}
+	if err := fileWriter.Close(); err != nil {
+		return fmt.Errorf("close archive file %q: %w", archivePath, err)
+	}
 
+	success = true
 	return nil
 }
 
@@ -427,21 +444,22 @@ func (e *compressNodeExecutor) walkAndArchive(
 	archiveWriter *zip.Writer,
 	includePatterns []string,
 	excludePatterns []string,
-) error {
+) (int, error) {
 	entries, err := e.fs.ReadDir(ctx, currentDir)
 	if err != nil {
-		return fmt.Errorf("read directory %q: %w", currentDir, err)
+		return 0, fmt.Errorf("read directory %q: %w", currentDir, err)
 	}
 
+	written := 0
 	for _, entry := range entries {
 		if err := ctx.Err(); err != nil {
-			return err
+			return written, err
 		}
 
 		fullPath := filepath.Join(currentDir, entry.Name)
 		relPath, err := filepath.Rel(rootDir, fullPath)
 		if err != nil {
-			return fmt.Errorf("build relative path for %q from %q: %w", fullPath, rootDir, err)
+			return written, fmt.Errorf("build relative path for %q from %q: %w", fullPath, rootDir, err)
 		}
 		relPath = filepath.ToSlash(relPath)
 
@@ -449,9 +467,11 @@ func (e *compressNodeExecutor) walkAndArchive(
 			if compressNodeShouldExclude(relPath, excludePatterns) {
 				continue
 			}
-			if err := e.walkAndArchive(ctx, rootDir, fullPath, archiveWriter, includePatterns, excludePatterns); err != nil {
-				return err
+			childWritten, err := e.walkAndArchive(ctx, rootDir, fullPath, archiveWriter, includePatterns, excludePatterns)
+			if err != nil {
+				return written, err
 			}
+			written += childWritten
 			continue
 		}
 
@@ -461,25 +481,26 @@ func (e *compressNodeExecutor) walkAndArchive(
 
 		reader, err := e.fs.OpenFileRead(ctx, fullPath)
 		if err != nil {
-			return fmt.Errorf("open source file %q: %w", fullPath, err)
+			return written, fmt.Errorf("open source file %q: %w", fullPath, err)
 		}
 
 		writer, err := archiveWriter.Create(relPath)
 		if err != nil {
 			reader.Close()
-			return fmt.Errorf("create archive entry %q: %w", relPath, err)
+			return written, fmt.Errorf("create archive entry %q: %w", relPath, err)
 		}
 
 		if _, err := io.Copy(writer, reader); err != nil {
 			reader.Close()
-			return fmt.Errorf("copy file %q to archive: %w", fullPath, err)
+			return written, fmt.Errorf("copy file %q to archive: %w", fullPath, err)
 		}
 		if err := reader.Close(); err != nil {
-			return fmt.Errorf("close source file %q: %w", fullPath, err)
+			return written, fmt.Errorf("close source file %q: %w", fullPath, err)
 		}
+		written++
 	}
 
-	return nil
+	return written, nil
 }
 
 func compressNodeResolveArchivePath(ctx context.Context, fsAdapter fs.FSAdapter, targetDir, baseName, extension string) (string, error) {
@@ -518,13 +539,7 @@ func compressNodeShouldInclude(relPath string, includePatterns []string) bool {
 
 	name := filepath.Base(relPath)
 	for _, pattern := range includePatterns {
-		if strings.TrimSpace(pattern) == "" {
-			continue
-		}
-		if matched, _ := filepath.Match(pattern, name); matched {
-			return true
-		}
-		if matched, _ := filepath.Match(pattern, relPath); matched {
+		if compressNodePatternMatches(pattern, name, relPath) {
 			return true
 		}
 	}
@@ -539,13 +554,38 @@ func compressNodeShouldExclude(relPath string, excludePatterns []string) bool {
 
 	name := filepath.Base(relPath)
 	for _, pattern := range excludePatterns {
-		if strings.TrimSpace(pattern) == "" {
-			continue
-		}
-		if matched, _ := filepath.Match(pattern, name); matched {
+		if compressNodePatternMatches(pattern, name, relPath) {
 			return true
 		}
-		if matched, _ := filepath.Match(pattern, relPath); matched {
+	}
+
+	return false
+}
+
+func compressNodePatternMatches(pattern, name, relPath string) bool {
+	trimmedPattern := strings.TrimSpace(pattern)
+	if trimmedPattern == "" {
+		return false
+	}
+
+	for _, candidate := range []string{name, relPath} {
+		if matched, _ := filepath.Match(trimmedPattern, candidate); matched {
+			return true
+		}
+	}
+
+	lowerPattern := strings.ToLower(trimmedPattern)
+	if lowerPattern == trimmedPattern {
+		for _, candidate := range []string{strings.ToLower(name), strings.ToLower(relPath)} {
+			if matched, _ := filepath.Match(lowerPattern, candidate); matched {
+				return true
+			}
+		}
+		return false
+	}
+
+	for _, candidate := range []string{strings.ToLower(name), strings.ToLower(relPath)} {
+		if matched, _ := filepath.Match(lowerPattern, candidate); matched {
 			return true
 		}
 	}
