@@ -27,19 +27,6 @@ export function useSSE() {
   useEffect(() => {
     let eventSource: EventSource | null = null
     let reconnectTimer: number | null = null
-    let folderRefreshTimer: number | null = null
-
-    const scheduleFolderRefresh = () => {
-      if (folderRefreshTimer !== null) {
-        window.clearTimeout(folderRefreshTimer)
-      }
-      folderRefreshTimer = window.setTimeout(() => {
-        folderRefreshTimer = null
-        void useFolderStore.getState().fetchFolders().finally(() => {
-          notifyFolderActivityUpdated()
-        })
-      }, 300)
-    }
 
     const connect = () => {
       eventSource = new EventSource('/api/events')
@@ -155,16 +142,28 @@ export function useSSE() {
           || payload.status === 'partial'
           || payload.status === 'failed'
         ) {
-          scheduleFolderRefresh()
+          const folderId = payload.folder_id?.trim() ?? ''
+          if (folderId !== '') {
+            void useFolderStore.getState().syncFolder(folderId).finally(() => {
+              notifyFolderActivityUpdated()
+            })
+          }
         }
       })
 
       const refreshRunReviews = (event: MessageEvent<string>) => {
         const payload = JSON.parse(event.data) as { workflow_run_id: string }
         if (!payload.workflow_run_id) return
-        useWorkflowRunStore.getState().handleReviewEvent(payload.workflow_run_id)
+        const workflowRunStore = useWorkflowRunStore.getState()
+        workflowRunStore.handleReviewEvent(payload.workflow_run_id)
         void useJobStore.getState().fetchJobs()
-        scheduleFolderRefresh()
+        const run = workflowRunStore.runsById[payload.workflow_run_id]
+        const folderId = run?.folder_id?.trim() ?? ''
+        if (folderId !== '') {
+          void useFolderStore.getState().syncFolder(folderId).finally(() => {
+            notifyFolderActivityUpdated()
+          })
+        }
       }
 
       eventSource.addEventListener('folder.classification.updated', (event) => {
@@ -186,9 +185,6 @@ export function useSSE() {
     return () => {
       if (reconnectTimer !== null) {
         window.clearTimeout(reconnectTimer)
-      }
-      if (folderRefreshTimer !== null) {
-        window.clearTimeout(folderRefreshTimer)
       }
 
       eventSource?.close()

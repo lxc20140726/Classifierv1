@@ -1970,6 +1970,7 @@ func (s *WorkflowRunnerService) publishWorkflowRunUpdated(ctx context.Context, w
 		"job_id":          run.JobID,
 		"workflow_run_id": run.ID,
 		"workflow_def_id": run.WorkflowDefID,
+		"folder_id":       strings.TrimSpace(run.FolderID),
 		"status":          run.Status,
 		"last_node_id":    strings.TrimSpace(run.LastNodeID),
 		"resume_node_id":  resumeNodeID,

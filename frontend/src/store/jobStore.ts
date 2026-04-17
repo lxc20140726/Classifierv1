@@ -4,6 +4,11 @@ import { getJobProgress, listJobs, type JobQueryParams } from '@/api/jobs'
 import { notifyFolderActivityUpdated } from '@/lib/folderActivityEvents'
 import type { Job, JobDoneEvent, JobProgress } from '@/types'
 
+export interface JobPollingContext {
+  jobType?: string
+  folderIds?: string[]
+}
+
 interface JobStore {
   jobs: Job[]
   total: number
@@ -19,7 +24,7 @@ interface JobStore {
   handleJobProgress: (progress: JobProgress) => void
   handleJobDone: (payload: JobDoneEvent) => void
   handleJobError: (jobId: string, error: string) => void
-  startPolling: (jobId: string) => void
+  startPolling: (jobId: string, context?: JobPollingContext) => void
   /** Poll a scan job and notify folderStore on completion (SSE fallback). */
   startScanPolling: (jobId: string) => void
   stopPolling: (jobId: string) => void
@@ -149,7 +154,7 @@ export const useJobStore = create<JobStore>((set, get) => ({
     get().stopPolling(jobId)
   },
 
-  startPolling(jobId) {
+  startPolling(jobId, context) {
     const { pollingJobIds, pollingTimers } = get()
 
     if (pollingJobIds.has(jobId)) {
@@ -167,8 +172,14 @@ export const useJobStore = create<JobStore>((set, get) => ({
           const { useActivityStore } = await import('@/store/activityStore')
           const { useFolderStore } = await import('@/store/folderStore')
           void useActivityStore.getState().fetchLogs({ limit: 20 })
-          void useFolderStore.getState().fetchFolders()
-          notifyFolderActivityUpdated()
+          if (context?.jobType === 'workflow' && Array.isArray(context.folderIds)) {
+            const uniqueFolderIds = [...new Set(context.folderIds.map((id) => id.trim()).filter((id) => id !== ''))]
+            await Promise.all(uniqueFolderIds.map((folderId) => useFolderStore.getState().syncFolder(folderId)))
+            notifyFolderActivityUpdated()
+          } else {
+            void useFolderStore.getState().fetchFolders()
+            notifyFolderActivityUpdated()
+          }
         }
 
         if (['succeeded', 'failed', 'partial', 'cancelled', 'rolled_back'].includes(progress.status)) {
@@ -176,8 +187,14 @@ export const useJobStore = create<JobStore>((set, get) => ({
           const { useActivityStore } = await import('@/store/activityStore')
           const { useFolderStore } = await import('@/store/folderStore')
           void useActivityStore.getState().fetchLogs({ limit: 20 })
-          void useFolderStore.getState().fetchFolders()
-          notifyFolderActivityUpdated()
+          if (context?.jobType === 'workflow' && Array.isArray(context.folderIds)) {
+            const uniqueFolderIds = [...new Set(context.folderIds.map((id) => id.trim()).filter((id) => id !== ''))]
+            await Promise.all(uniqueFolderIds.map((folderId) => useFolderStore.getState().syncFolder(folderId)))
+            notifyFolderActivityUpdated()
+          } else {
+            void useFolderStore.getState().fetchFolders()
+            notifyFolderActivityUpdated()
+          }
         } else {
           const timer = window.setTimeout(poll, 2000)
           pollingTimers.set(jobId, timer)

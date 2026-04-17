@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 
 import {
+  getFolder,
   suppressFolder as suppressFolderRecord,
   listFolders,
   unsuppressFolder as unsuppressFolderRecord,
@@ -46,6 +47,7 @@ interface FolderStore {
   isScanning: boolean
   viewMode: FolderViewMode
   fetchFolders: () => Promise<void>
+  syncFolder: (folderId: string) => Promise<void>
   setFilters: (filters: FolderFilters) => void
   setPage: (page: number) => void
   setViewMode: (mode: FolderViewMode) => void
@@ -102,6 +104,28 @@ export const useFolderStore = create<FolderStore>((set, get) => ({
       set({
         isLoading: false,
         error: error instanceof Error ? error.message : '加载目录失败',
+      })
+    }
+  },
+  async syncFolder(folderId) {
+    const normalizedFolderID = folderId.trim()
+    if (normalizedFolderID === '') return
+
+    try {
+      const response = await getFolder(normalizedFolderID)
+      set((state) => {
+        const index = state.folders.findIndex((folder) => folder.id === normalizedFolderID)
+        if (index === -1) {
+          return {}
+        }
+
+        const nextFolders = [...state.folders]
+        nextFolders[index] = response.data
+        return { folders: nextFolders }
+      })
+    } catch (error) {
+      set({
+        error: error instanceof Error ? error.message : '同步目录失败',
       })
     }
   },

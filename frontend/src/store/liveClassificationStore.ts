@@ -297,7 +297,7 @@ export const useLiveClassificationStore = create<LiveClassificationStore>((set, 
   },
 
   handleWorkflowRunUpdated(payload) {
-    const folderID = get().runToFolderId[payload.workflow_run_id]
+    const folderID = payload.folder_id || get().runToFolderId[payload.workflow_run_id]
     if (!folderID) return
 
     set((state) => {
@@ -312,7 +312,12 @@ export const useLiveClassificationStore = create<LiveClassificationStore>((set, 
         last_event_at: now,
       }
       const merged = { ...state.itemsById, [folderID]: nextItem }
-      return upsertAndTrim(merged)
+      const next = upsertAndTrim(merged)
+      const runToFolderId = { ...state.runToFolderId }
+      if (payload.workflow_run_id) {
+        runToFolderId[payload.workflow_run_id] = folderID
+      }
+      return { ...next, runToFolderId }
     })
 
     if (get().selectedFolderId === folderID) {
@@ -363,4 +368,3 @@ export const useLiveClassificationStore = create<LiveClassificationStore>((set, 
     }
   },
 }))
-

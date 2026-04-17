@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { listFolders, updateFolderStatus } from '@/api/folders'
+import { getFolder, listFolders, updateFolderStatus } from '@/api/folders'
 import { notifyFolderActivityUpdated } from '@/lib/folderActivityEvents'
 import { useFolderStore } from '@/store/folderStore'
 import type { Folder } from '@/types'
 
 vi.mock('@/api/folders', () => ({
+  getFolder: vi.fn(),
   listFolders: vi.fn(),
   scanFolders: vi.fn(),
   suppressFolder: vi.fn(),
@@ -121,5 +122,60 @@ describe('folderStore', () => {
     expect(state.scanProgress?.currentFolderName).toBe('new-folder')
     expect(state.scanProgress?.sourceDirs).toEqual(['/source-a'])
     expect(state.error).toBe('step failed')
+  })
+
+  it('syncFolder 只替换现有行且不改变分页信息', async () => {
+    useFolderStore.setState({
+      folders: [makeFolder(), makeFolder({ id: 'folder-2', name: 'folder-2' })],
+      total: 99,
+      page: 3,
+      limit: 30,
+    })
+    vi.mocked(getFolder).mockResolvedValue({
+      data: makeFolder({ id: 'folder-1', status: 'done', name: 'folder-1-updated' }),
+    })
+
+    await useFolderStore.getState().syncFolder('folder-1')
+
+    const state = useFolderStore.getState()
+    expect(state.folders).toHaveLength(2)
+    expect(state.folders[0]?.id).toBe('folder-1')
+    expect(state.folders[0]?.status).toBe('done')
+    expect(state.folders[0]?.name).toBe('folder-1-updated')
+    expect(state.folders[1]?.id).toBe('folder-2')
+    expect(state.total).toBe(99)
+    expect(state.page).toBe(3)
+    expect(state.limit).toBe(30)
+    expect(state.isLoading).toBe(false)
+  })
+
+  it('syncFolder 目标不在当前列表时不插入新行', async () => {
+    useFolderStore.setState({
+      folders: [makeFolder({ id: 'folder-a' })],
+    })
+    vi.mocked(getFolder).mockResolvedValue({
+      data: makeFolder({ id: 'folder-b', status: 'done' }),
+    })
+
+    await useFolderStore.getState().syncFolder('folder-b')
+
+    const state = useFolderStore.getState()
+    expect(state.folders).toHaveLength(1)
+    expect(state.folders[0]?.id).toBe('folder-a')
+  })
+
+  it('syncFolder 同步后即使状态变更也保留当前行', async () => {
+    useFolderStore.setState({
+      folders: [makeFolder({ id: 'folder-1', status: 'pending' }), makeFolder({ id: 'folder-2' })],
+    })
+    vi.mocked(getFolder).mockResolvedValue({
+      data: makeFolder({ id: 'folder-1', status: 'done' }),
+    })
+
+    await useFolderStore.getState().syncFolder('folder-1')
+
+    const state = useFolderStore.getState()
+    expect(state.folders.map((item) => item.id)).toEqual(['folder-1', 'folder-2'])
+    expect(state.folders[0]?.status).toBe('done')
   })
 })

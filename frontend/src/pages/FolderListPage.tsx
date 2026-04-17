@@ -785,7 +785,10 @@ export default function FolderListPage() {
         },
         bindLatestLaunch,
       })
-      startJobPolling(result.jobId)
+      startJobPolling(result.jobId, {
+        jobType: 'workflow',
+        folderIds: [launchDialog.folder.id],
+      })
       setLaunchSuccessJobId(result.jobId)
       await fetchWorkflowDefs()
     } catch (err) {

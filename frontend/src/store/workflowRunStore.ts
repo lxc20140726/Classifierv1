@@ -157,8 +157,13 @@ function getRecentLaunchRecord(
   workflowDefId: string,
   folderId?: string,
 ) {
-  const scopedRecord = recentLaunchByScope[buildRecentLaunchScopeKey(workflowDefId, folderId)]
-  if (scopedRecord) return scopedRecord
+  const normalizedFolderId = folderId?.trim() ?? ''
+  if (normalizedFolderId !== '') {
+    const scopedRecord = recentLaunchByScope[buildRecentLaunchScopeKey(workflowDefId, normalizedFolderId)]
+    if (scopedRecord) return scopedRecord
+    return undefined
+  }
+
   return recentLaunchByScope[buildRecentLaunchScopeKey(workflowDefId)]
 }
 
@@ -415,12 +420,11 @@ export const useWorkflowRunStore = create<WorkflowRunStore>((set, get) => ({
     if (!workflowDefId || !jobId) return
 
     set((state) => {
-      const current = getRecentLaunchRecord(state.recentLaunchByScope, workflowDefId, folderId)
       const nextRecent = setRecentLaunchRecord(
         state.recentLaunchByScope,
         workflowDefId,
         jobId,
-        current?.workflowRunId,
+        undefined,
         folderId,
       )
       persistRecentLaunches(nextRecent)
@@ -460,6 +464,7 @@ export const useWorkflowRunStore = create<WorkflowRunStore>((set, get) => ({
   async restoreLatestLaunch(workflowDefId, folderId) {
     if (!workflowDefId) return
 
+    const normalizedFolderId = folderId?.trim() ?? ''
     const localRecord = getRecentLaunchRecord(get().recentLaunchByScope, workflowDefId, folderId)
     if (localRecord?.workflowRunId) {
       void get().fetchRunDetail(localRecord.workflowRunId)
@@ -491,6 +496,8 @@ export const useWorkflowRunStore = create<WorkflowRunStore>((set, get) => ({
       }
     }
 
+    if (normalizedFolderId !== '') return
+
     try {
       const jobResp = await listJobs({ page: 1, limit: 100 })
       const fallbackJob = jobResp.data.find(
@@ -513,10 +520,11 @@ export const useWorkflowRunStore = create<WorkflowRunStore>((set, get) => ({
     set((state) => {
       const now = new Date().toISOString()
       const existing = state.runsById[workflowRunId]
+      const eventFolderId = event.folder_id?.trim() ?? ''
       const nextRun: WorkflowRun = {
         id: workflowRunId,
         job_id: jobId,
-        folder_id: existing?.folder_id ?? '',
+        folder_id: eventFolderId || existing?.folder_id || '',
         source_dir: existing?.source_dir,
         workflow_def_id: workflowDefId,
         status: (event.status ?? existing?.status ?? 'pending') as WorkflowRunStatus,
@@ -537,7 +545,7 @@ export const useWorkflowRunStore = create<WorkflowRunStore>((set, get) => ({
         workflowDefId,
         jobId,
         workflowRunId,
-        event.folder_id ?? existing?.folder_id,
+        eventFolderId || existing?.folder_id,
       )
       persistRecentLaunches(nextRecent)
 
@@ -624,13 +632,18 @@ export const useWorkflowRunStore = create<WorkflowRunStore>((set, get) => ({
     const runID = record.workflowRunId
     const fromRunID = runID ? get().runsById[runID] : undefined
     const normalizedFolderId = folderId?.trim() ?? ''
+    const fromRunIDMatchesFolder = !fromRunID
+      || normalizedFolderId === ''
+      || fromRunID.folder_id === normalizedFolderId
+    const scopedRun = fromRunIDMatchesFolder ? fromRunID : undefined
     const fromJobRuns = (get().runsByJobId[record.jobId] ?? []).find(
       (run) => run.workflow_def_id === workflowDefId
         && (normalizedFolderId === '' || run.folder_id === normalizedFolderId),
     )
-    const run = fromRunID ?? fromJobRuns ?? null
+    const run = scopedRun ?? fromJobRuns ?? null
 
     if (!run) {
+      if (fromRunID && !fromRunIDMatchesFolder) return null
       if (!isRecentBindingRecord(record)) return null
       return {
         workflowDefId,

@@ -443,6 +443,7 @@ export interface WorkflowRunUpdatedEvent {
   job_id: string
   workflow_run_id: string
   workflow_def_id: string
+  folder_id?: string
   status: WorkflowRunStatus
   last_node_id?: string
   resume_node_id?: string | null
