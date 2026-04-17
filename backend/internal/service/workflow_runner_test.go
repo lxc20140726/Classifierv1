@@ -2454,8 +2454,8 @@ func TestSyncFolderStatusesByWorkflowRunSucceededMarksFolderDoneAfterOutputCheck
 			Type: PortTypeProcessingItemList,
 			Value: []ProcessingItem{{
 				FolderID:    folder.ID,
-				SourcePath:  "/target/mixed/video-season",
-				CurrentPath: "/target/mixed/video-season",
+				SourcePath:  "/target/video/video-season",
+				CurrentPath: "/target/video/video-season",
 				FolderName:  "video-season",
 				Category:    "video",
 			}},
@@ -2465,7 +2465,7 @@ func TestSyncFolderStatusesByWorkflowRunSucceededMarksFolderDoneAfterOutputCheck
 			Value: []ProcessingStepResult{{
 				FolderID:   folder.ID,
 				SourcePath: "/source/video-season",
-				TargetPath: "/target/mixed/video-season",
+				TargetPath: "/target/video/video-season",
 				NodeType:   phase4MoveNodeExecutorType,
 				Status:     "moved",
 			}},
@@ -2483,7 +2483,7 @@ func TestSyncFolderStatusesByWorkflowRunSucceededMarksFolderDoneAfterOutputCheck
 		t.Fatalf("nodeRunRepo.Create() error = %v", err)
 	}
 
-	adapter.AddFile("/target/mixed/video-season/movie.mkv", []byte("video"))
+	adapter.AddFile("/target/video/video-season/movie.mkv", []byte("video"))
 
 	svc := NewWorkflowRunnerService(
 		jobRepo,

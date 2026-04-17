@@ -206,6 +206,7 @@ func (s *OutputValidationService) validateAndPersistCheck(
 	for _, outputDir := range allowedOutputDirs {
 		allowedOutputDirSet[outputValidationNormalizeForCompare(outputDir)] = struct{}{}
 	}
+	allowedOutputDirsByCategory := outputValidationAllowedDirsByCategory(appConfig)
 
 	errorsList := make([]repository.OutputCheckError, 0, 16)
 	addError := func(code, message, sourcePath, outputPath, nodeType string) {
@@ -252,6 +253,10 @@ func (s *OutputValidationService) validateAndPersistCheck(
 			}
 			if !outputValidationPathAllowed(outputPath, allowedOutputDirSet) {
 				addError("output_dir_mismatch", "mapped output path is outside configured output directories", sourcePath, outputPath, mapping.NodeType)
+			}
+			expectedCategory := outputValidationExpectedManifestCategory(folder, manifest)
+			if expectedCategory != "" && !outputValidationPathAllowedForCategory(outputPath, expectedCategory, allowedOutputDirsByCategory) {
+				addError("output_category_mismatch", fmt.Sprintf("mapped output path is outside configured %s output directories", expectedCategory), sourcePath, outputPath, mapping.NodeType)
 			}
 		}
 		if !mappedAnyExisting {
@@ -481,6 +486,72 @@ func outputValidationAllowedDirs(config *repository.AppConfig) []string {
 	out = append(out, config.OutputDirs.Mixed...)
 	out = append(out, config.OutputDirs.Other...)
 	return out
+}
+
+func outputValidationAllowedDirsByCategory(config *repository.AppConfig) map[string]map[string]struct{} {
+	out := map[string]map[string]struct{}{}
+	if config == nil {
+		return out
+	}
+
+	add := func(category string, dirs []string) {
+		set := make(map[string]struct{}, len(dirs))
+		for _, dir := range dirs {
+			normalized := outputValidationNormalizeForCompare(dir)
+			if normalized == "" {
+				continue
+			}
+			set[normalized] = struct{}{}
+		}
+		out[category] = set
+	}
+	add("video", config.OutputDirs.Video)
+	add("photo", config.OutputDirs.Photo)
+	add("manga", config.OutputDirs.Manga)
+
+	return out
+}
+
+func outputValidationExpectedManifestCategory(folder *repository.Folder, manifest *repository.FolderSourceManifest) string {
+	if folder != nil {
+		folderCategory := strings.ToLower(strings.TrimSpace(folder.Category))
+		switch folderCategory {
+		case "video", "photo", "manga":
+			return folderCategory
+		}
+	}
+
+	if manifest == nil {
+		return ""
+	}
+
+	name := strings.TrimSpace(manifest.FileName)
+	if name == "" {
+		name = strings.TrimSpace(manifest.SourcePath)
+	}
+	ext := strings.ToLower(strings.TrimSpace(filepath.Ext(name)))
+	switch {
+	case videoExtsSet[ext]:
+		return "video"
+	case imageExtsSet[ext]:
+		return "photo"
+	case mangaExts[ext]:
+		return "manga"
+	default:
+		return ""
+	}
+}
+
+func outputValidationPathAllowedForCategory(outputPath string, category string, allowedByCategory map[string]map[string]struct{}) bool {
+	category = strings.ToLower(strings.TrimSpace(category))
+	if category == "" {
+		return true
+	}
+	allowed, ok := allowedByCategory[category]
+	if !ok || len(allowed) == 0 {
+		return true
+	}
+	return outputValidationPathAllowed(outputPath, allowed)
 }
 
 func outputValidationPathAllowed(outputPath string, allowedOutputDirSet map[string]struct{}) bool {

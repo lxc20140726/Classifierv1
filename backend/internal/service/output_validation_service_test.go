@@ -107,7 +107,7 @@ func TestOutputValidationValidateFolderDirectoryMovePassesForNestedFiles(t *test
 	}
 }
 
-func TestOutputValidationAllowsConfiguredOutputDirAcrossCategories(t *testing.T) {
+func TestOutputValidationRejectsConfiguredOutputDirAcrossCategories(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -171,6 +171,101 @@ func TestOutputValidationAllowsConfiguredOutputDirAcrossCategories(t *testing.T)
 	}
 
 	adapter.AddFile("/target/mixed/video-season/movie.mkv", []byte("video"))
+
+	svc := NewOutputValidationService(adapter, folderRepo, configRepo, manifestRepo, mappingRepo, outputCheckRepo)
+
+	check, err := svc.ValidateFolder(ctx, folder.ID)
+	if err != nil {
+		t.Fatalf("ValidateFolder() error = %v", err)
+	}
+	if check.Status != "failed" {
+		t.Fatalf("check.Status = %q, want failed", check.Status)
+	}
+	if check.MismatchCount != 1 {
+		t.Fatalf("check.MismatchCount = %d, want 1 (errors=%+v)", check.MismatchCount, check.Errors)
+	}
+	if len(check.Errors) != 1 || check.Errors[0].Code != "output_category_mismatch" {
+		t.Fatalf("check.Errors = %+v, want output_category_mismatch", check.Errors)
+	}
+}
+
+func TestOutputValidationAllowsCoverImageInsideVideoFolderOutput(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	database := newServiceTestDB(t)
+	folderRepo := repository.NewFolderRepository(database)
+	configRepo := repository.NewConfigRepository(database)
+	manifestRepo := repository.NewSourceManifestRepository(database)
+	mappingRepo := repository.NewOutputMappingRepository(database)
+	outputCheckRepo := repository.NewOutputCheckRepository(database)
+	adapter := fs.NewMockAdapter()
+
+	if err := configRepo.SaveAppConfig(ctx, &repository.AppConfig{
+		Version: 1,
+		OutputDirs: repository.AppConfigOutputDirs{
+			Video: []string{"/target/video"},
+			Photo: []string{"/target/photo"},
+		},
+	}); err != nil {
+		t.Fatalf("configRepo.SaveAppConfig() error = %v", err)
+	}
+
+	folder := &repository.Folder{
+		ID:             "folder-output-validation-video-cover",
+		Path:           "/source/video-season",
+		SourceDir:      "/source",
+		RelativePath:   "video-season",
+		Name:           "video-season",
+		Category:       "video",
+		CategorySource: "workflow",
+		Status:         "pending",
+	}
+	if err := folderRepo.Upsert(ctx, folder); err != nil {
+		t.Fatalf("folderRepo.Upsert() error = %v", err)
+	}
+
+	if err := manifestRepo.CreateBatchForWorkflowRun(ctx, "wr-output-validation-video-cover", folder.ID, "batch-1", []*repository.FolderSourceManifest{
+		{
+			ID:            "manifest-video-cover-movie",
+			WorkflowRunID: "wr-output-validation-video-cover",
+			FolderID:      folder.ID,
+			BatchID:       "batch-1",
+			SourcePath:    "/source/video-season/movie.mkv",
+			RelativePath:  "movie.mkv",
+			FileName:      "movie.mkv",
+			SizeBytes:     10,
+		},
+		{
+			ID:            "manifest-video-cover-image",
+			WorkflowRunID: "wr-output-validation-video-cover",
+			FolderID:      folder.ID,
+			BatchID:       "batch-1",
+			SourcePath:    "/source/video-season/cover.jpg",
+			RelativePath:  "cover.jpg",
+			FileName:      "cover.jpg",
+			SizeBytes:     20,
+		},
+	}); err != nil {
+		t.Fatalf("manifestRepo.CreateBatchForWorkflowRun() error = %v", err)
+	}
+
+	if err := mappingRepo.ReplaceByWorkflowRunID(ctx, "wr-output-validation-video-cover", []*repository.FolderOutputMapping{{
+		ID:               "mapping-video-cover",
+		WorkflowRunID:    "wr-output-validation-video-cover",
+		FolderID:         folder.ID,
+		SourcePath:       "/source/video-season",
+		OutputPath:       "/target/video/video-season",
+		OutputContainer:  "/target/video",
+		NodeType:         "move-node",
+		ArtifactType:     "primary",
+		RequiredArtifact: false,
+	}}); err != nil {
+		t.Fatalf("mappingRepo.ReplaceByWorkflowRunID() error = %v", err)
+	}
+
+	adapter.AddFile("/target/video/video-season/movie.mkv", []byte("video"))
+	adapter.AddFile("/target/video/video-season/cover.jpg", []byte("cover"))
 
 	svc := NewOutputValidationService(adapter, folderRepo, configRepo, manifestRepo, mappingRepo, outputCheckRepo)
 

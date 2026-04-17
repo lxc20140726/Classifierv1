@@ -766,6 +766,13 @@ function NodeConfigPanel({ nodeId, nodeType, config, updateNodeConfig }: NodeCon
     set('path_ref_type', next.pathRefType)
     set('path_ref_key', next.pathRefKey)
     set('path_suffix', next.pathSuffix)
+    set('target_dir', '')
+    set('targetDir', '')
+    set('output_dir', '')
+    set('target_dir_source', '')
+    set('output_dir_source', '')
+    set('target_dir_option_id', '')
+    set('output_dir_option_id', '')
   }
   const strategy = cfgStr(config, 'strategy') || 'simple'
 

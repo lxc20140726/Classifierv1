@@ -857,6 +857,79 @@ func TestMoveNodeExecutorMergeValidationAndArchiveFlatten(t *testing.T) {
 		}
 	})
 
+	t.Run("mixed_output_key_routes_each_item_to_category_output", func(t *testing.T) {
+		t.Parallel()
+
+		root := t.TempDir()
+		rootPath := filepath.Join(root, "source", "Bangni邦尼  中秋节玉兔 [88P7V 720M]")
+		photoStagePath := filepath.Join(rootPath, "__photo")
+		videoPath := filepath.Join(rootPath, "视频")
+		videoTargetDir := filepath.Join(root, "target", "video")
+		photoTargetDir := filepath.Join(root, "target", "photo")
+		mixedTargetDir := filepath.Join(root, "target", "mixed")
+		mustMkdirAll(t, photoStagePath)
+		mustMkdirAll(t, videoPath)
+		if err := os.WriteFile(filepath.Join(photoStagePath, "1.jpg"), []byte("photo"), 0o644); err != nil {
+			t.Fatalf("os.WriteFile(photo) error = %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(videoPath, "V (1).mp4"), []byte("video"), 0o644); err != nil {
+			t.Fatalf("os.WriteFile(video) error = %v", err)
+		}
+
+		executor := newPhase4MoveNodeExecutor(fs.NewOSAdapter(), nil)
+		_, err := executor.Execute(context.Background(), NodeExecutionInput{
+			Node: repository.WorkflowGraphNode{Config: map[string]any{
+				"path_ref_type": workflowPathRefTypeOutput,
+				"path_ref_key":  "mixed",
+				"path_suffix":   ".processed",
+			}},
+			AppConfig: &repository.AppConfig{
+				OutputDirs: repository.AppConfigOutputDirs{
+					Video: []string{videoTargetDir},
+					Photo: []string{photoTargetDir},
+					Mixed: []string{mixedTargetDir},
+				},
+			},
+			Inputs: testInputs(map[string]any{"items": []ProcessingItem{
+				{
+					SourcePath:         photoStagePath,
+					CurrentPath:        photoStagePath,
+					RootPath:           rootPath,
+					RelativePath:       "photo",
+					SourceKind:         ProcessingItemSourceKindDirectory,
+					Category:           "photo",
+					OriginalSourcePath: rootPath,
+				},
+				{
+					SourcePath:         videoPath,
+					CurrentPath:        videoPath,
+					RootPath:           rootPath,
+					RelativePath:       "视频",
+					SourceKind:         ProcessingItemSourceKindDirectory,
+					Category:           "video",
+					OriginalSourcePath: rootPath,
+				},
+			}}),
+		})
+		if err != nil {
+			t.Fatalf("Execute() error = %v", err)
+		}
+
+		rootName := filepath.Base(rootPath)
+		photoProcessedDir := filepath.Join(photoTargetDir, ".processed")
+		videoProcessedDir := filepath.Join(videoTargetDir, ".processed")
+		mixedProcessedDir := filepath.Join(mixedTargetDir, ".processed")
+		if !pathExists(t, filepath.Join(photoProcessedDir, rootName, "1.jpg")) {
+			t.Fatalf("expected photo file under %q", filepath.Join(photoProcessedDir, rootName))
+		}
+		if !pathExists(t, filepath.Join(videoProcessedDir, rootName, "V (1).mp4")) {
+			t.Fatalf("expected video file under %q", filepath.Join(videoProcessedDir, rootName))
+		}
+		if pathExists(t, filepath.Join(mixedProcessedDir, rootName, "V (1).mp4")) {
+			t.Fatalf("video file should not be moved under mixed target")
+		}
+	})
+
 	t.Run("multiple_root_path_returns_error", func(t *testing.T) {
 		t.Parallel()
 

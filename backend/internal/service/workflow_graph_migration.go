@@ -431,6 +431,8 @@ func migrateNodePathConfig(node *repository.WorkflowGraphNode) bool {
 		}
 	}
 	legacyRefType, legacyRefKey := legacyPathRefFromConfig(node.Config)
+	hasModernPathRef := strings.TrimSpace(stringConfig(node.Config, "path_ref_type")) != "" ||
+		strings.TrimSpace(stringConfig(node.Config, "path_ref_key")) != ""
 
 	if strings.TrimSpace(stringConfig(node.Config, "path_ref_type")) == "" {
 		if legacyRefType != "" {
@@ -463,7 +465,7 @@ func migrateNodePathConfig(node *repository.WorkflowGraphNode) bool {
 		changed = true
 	}
 
-	if legacyPath != "" {
+	if legacyPath != "" && !hasModernPathRef {
 		node.Config["path_ref_type"] = workflowPathRefTypeCustom
 		node.Config["path_ref_key"] = legacyPath
 		changed = true

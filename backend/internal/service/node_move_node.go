@@ -104,14 +104,18 @@ func (e *phase4MoveNodeExecutor) Execute(ctx context.Context, input NodeExecutio
 		return NodeExecutionOutput{}, fmt.Errorf("%s.Execute: %w", e.Type(), err)
 	}
 
-	targetRoot := joinWorkflowPath(targetDir, rootName)
-	if err := e.fs.MkdirAll(ctx, targetRoot, 0o755); err != nil {
-		return NodeExecutionOutput{}, fmt.Errorf("%s.Execute: create target root %q: %w", e.Type(), targetRoot, err)
-	}
-
 	stepResults := make([]ProcessingStepResult, 0, len(normalizedItems))
 	outputItems := make([]ProcessingItem, 0, len(normalizedItems))
 	for index, item := range normalizedItems {
+		itemTargetDir := phase4MoveResolveItemTargetDir(item, input.Node.Config, input.AppConfig, targetDir)
+		if strings.TrimSpace(itemTargetDir) == "" {
+			itemTargetDir = targetDir
+		}
+		targetRoot := joinWorkflowPath(itemTargetDir, rootName)
+		if err := e.fs.MkdirAll(ctx, targetRoot, 0o755); err != nil {
+			return NodeExecutionOutput{}, fmt.Errorf("%s.Execute: create target root %q: %w", e.Type(), targetRoot, err)
+		}
+
 		switch item.SourceKind {
 		case ProcessingItemSourceKindDirectory:
 			results, processErr := e.moveDirectoryArtifacts(ctx, item, targetRoot, conflictPolicy, input)
@@ -129,11 +133,11 @@ func (e *phase4MoveNodeExecutor) Execute(ctx context.Context, input NodeExecutio
 			return NodeExecutionOutput{}, fmt.Errorf("%s.Execute: unsupported source_kind %q", e.Type(), item.SourceKind)
 		}
 		item.CurrentPath = normalizeWorkflowPath(targetRoot)
-		item.ParentPath = targetDir
+		item.ParentPath = itemTargetDir
 		item.FolderName = rootName
 		item.TargetName = rootName
 		if e.folders != nil && strings.TrimSpace(item.FolderID) != "" && item.SourceKind == ProcessingItemSourceKindDirectory {
-			if err := e.folders.UpdatePath(ctx, item.FolderID, item.CurrentPath, targetDir, rootName); err != nil {
+			if err := e.folders.UpdatePath(ctx, item.FolderID, item.CurrentPath, itemTargetDir, rootName); err != nil {
 				return NodeExecutionOutput{}, fmt.Errorf("%s.Execute: update folder path for %q: %w", e.Type(), item.FolderID, err)
 			}
 		}
@@ -294,6 +298,48 @@ func phase4MoveInferSingleCategory(items []ProcessingItem) string {
 		}
 	}
 	return category
+}
+
+func phase4MoveResolveItemTargetDir(item ProcessingItem, config map[string]any, appConfig *repository.AppConfig, fallback string) string {
+	refType := strings.ToLower(strings.TrimSpace(stringConfig(config, "path_ref_type")))
+	if refType != workflowPathRefTypeOutput {
+		return fallback
+	}
+
+	outputKey := strings.TrimSpace(stringConfig(config, "path_ref_key"))
+	if outputKey == "" {
+		outputKey = "mixed"
+	}
+	configuredCategory, index := parseOutputDirRef(outputKey)
+	if configuredCategory != "mixed" || index < 0 {
+		return fallback
+	}
+
+	itemCategory := strings.ToLower(strings.TrimSpace(item.Category))
+	switch itemCategory {
+	case "video", "manga", "photo", "other":
+	default:
+		return fallback
+	}
+
+	candidateKey := itemCategory
+	if index > 0 {
+		candidateKey = fmt.Sprintf("%s:%d", itemCategory, index)
+	}
+	candidateConfig := make(map[string]any, len(config)+1)
+	for key, value := range config {
+		candidateConfig[key] = value
+	}
+	candidateConfig["path_ref_key"] = candidateKey
+	if targetDir := resolveWorkflowNodePath(candidateConfig, appConfig, workflowNodePathOptions{
+		DefaultType:      workflowPathRefTypeOutput,
+		DefaultOutputKey: "mixed",
+		LegacyKeys:       []string{"target_dir", "targetDir", "output_dir"},
+	}); targetDir != "" {
+		return targetDir
+	}
+
+	return fallback
 }
 
 func (e *phase4MoveNodeExecutor) executeLegacyMove(

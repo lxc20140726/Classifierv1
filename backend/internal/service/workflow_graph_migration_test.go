@@ -404,6 +404,68 @@ func TestNormalizeWorkflowDefinitionGraphs_MigratesLegacyMovePathOption(t *testi
 	}
 }
 
+func TestNormalizeWorkflowDefinitionGraphs_ModernMovePathRefWinsOverLegacyPath(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	database := newServiceTestDB(t)
+	repo := repository.NewWorkflowDefinitionRepository(database)
+
+	graph := repository.WorkflowGraph{
+		Nodes: []repository.WorkflowGraphNode{
+			{
+				ID:      "move",
+				Type:    "move-node",
+				Enabled: true,
+				Config: map[string]any{
+					"path_ref_type": workflowPathRefTypeOutput,
+					"path_ref_key":  "video:0",
+					"target_dir":    "/target/mixed",
+				},
+			},
+		},
+	}
+	graphJSON, err := json.Marshal(graph)
+	if err != nil {
+		t.Fatalf("json.Marshal(graph) error = %v", err)
+	}
+
+	def := &repository.WorkflowDefinition{
+		ID:        "wf-modern-path-ref-wins",
+		Name:      "wf-modern-path-ref-wins",
+		GraphJSON: string(graphJSON),
+		IsActive:  true,
+		Version:   1,
+	}
+	if err := repo.Create(ctx, def); err != nil {
+		t.Fatalf("repo.Create() error = %v", err)
+	}
+
+	if err := NormalizeWorkflowDefinitionGraphs(ctx, repo); err != nil {
+		t.Fatalf("NormalizeWorkflowDefinitionGraphs() error = %v", err)
+	}
+
+	updated, err := repo.GetByID(ctx, def.ID)
+	if err != nil {
+		t.Fatalf("repo.GetByID() error = %v", err)
+	}
+	var normalized repository.WorkflowGraph
+	if err := json.Unmarshal([]byte(updated.GraphJSON), &normalized); err != nil {
+		t.Fatalf("json.Unmarshal(updated.GraphJSON) error = %v", err)
+	}
+
+	moveNode := normalized.Nodes[0]
+	if got := strings.TrimSpace(stringConfig(moveNode.Config, "path_ref_type")); got != workflowPathRefTypeOutput {
+		t.Fatalf("move path_ref_type = %q, want %q", got, workflowPathRefTypeOutput)
+	}
+	if got := strings.TrimSpace(stringConfig(moveNode.Config, "path_ref_key")); got != "video:0" {
+		t.Fatalf("move path_ref_key = %q, want video:0", got)
+	}
+	if _, ok := moveNode.Config["target_dir"]; ok {
+		t.Fatalf("legacy key target_dir should be removed")
+	}
+}
+
 func TestNormalizeWorkflowDefinitionGraphs_AddsGenericMixedOtherBranch(t *testing.T) {
 	t.Parallel()
 
