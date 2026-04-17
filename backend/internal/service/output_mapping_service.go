@@ -168,10 +168,10 @@ func outputMappingResolveFolderID(
 			}
 			sourcePath := normalizeWorkflowPath(step.SourcePath)
 			targetPath := normalizeWorkflowPath(step.TargetPath)
-			if sourcePath != "" && (sourcePath == candidate || strings.HasPrefix(sourcePath, candidate+string(filepath.Separator))) {
+			if sourcePath != "" && (sourcePath == candidate || strings.HasPrefix(sourcePath, candidate+"/")) {
 				return folderID
 			}
-			if targetPath != "" && (targetPath == candidate || strings.HasPrefix(targetPath, candidate+string(filepath.Separator))) {
+			if targetPath != "" && (targetPath == candidate || strings.HasPrefix(targetPath, candidate+"/")) {
 				return folderID
 			}
 		}
@@ -248,7 +248,7 @@ func outputMappingSourceRelativePath(ctx context.Context, folders repository.Fol
 	if normalizedSourcePath == rootPath {
 		return ""
 	}
-	if !strings.HasPrefix(normalizedSourcePath, rootPath+string(filepath.Separator)) {
+	if !strings.HasPrefix(normalizedSourcePath, rootPath+"/") {
 		return ""
 	}
 	relativePath, err := filepath.Rel(rootPath, normalizedSourcePath)

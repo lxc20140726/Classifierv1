@@ -2372,6 +2372,108 @@ func TestSyncFolderStatusesByWorkflowRunPartialBuildsMappingsWithoutValidation(t
 	}
 }
 
+func TestSyncFolderStatusesByWorkflowRunSucceededWithoutOutputChecksMarksPending(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	database := newServiceTestDB(t)
+	jobRepo := repository.NewJobRepository(database)
+	folderRepo := repository.NewFolderRepository(database)
+	workflowDefRepo := repository.NewWorkflowDefinitionRepository(database)
+	workflowRunRepo := repository.NewWorkflowRunRepository(database)
+	nodeRunRepo := repository.NewNodeRunRepository(database)
+	nodeSnapshotRepo := repository.NewNodeSnapshotRepository(database)
+
+	folder := &repository.Folder{
+		ID:             "folder-empty-output",
+		Path:           "/source/folder-empty-output",
+		SourceDir:      "/source",
+		RelativePath:   "folder-empty-output",
+		Name:           "folder-empty-output",
+		Category:       "mixed",
+		CategorySource: "workflow",
+		Status:         "done",
+	}
+	if err := folderRepo.Upsert(ctx, folder); err != nil {
+		t.Fatalf("folderRepo.Upsert() error = %v", err)
+	}
+
+	job := &repository.Job{
+		ID:            "job-empty-output",
+		Type:          "workflow",
+		WorkflowDefID: "wf-empty-output",
+		Status:        "running",
+		FolderIDs:     `["folder-empty-output"]`,
+		Total:         1,
+	}
+	if err := jobRepo.Create(ctx, job); err != nil {
+		t.Fatalf("jobRepo.Create() error = %v", err)
+	}
+
+	run := &repository.WorkflowRun{
+		ID:            "run-empty-output",
+		JobID:         job.ID,
+		WorkflowDefID: job.WorkflowDefID,
+		FolderID:      folder.ID,
+		Status:        "running",
+	}
+	if err := workflowRunRepo.Create(ctx, run); err != nil {
+		t.Fatalf("workflowRunRepo.Create() error = %v", err)
+	}
+
+	if err := nodeRunRepo.Create(ctx, &repository.NodeRun{
+		ID:            "node-run-empty-output",
+		WorkflowRunID: run.ID,
+		NodeID:        "rename",
+		NodeType:      renameNodeExecutorType,
+		Sequence:      1,
+		Status:        "skipped",
+		OutputJSON:    "",
+	}); err != nil {
+		t.Fatalf("nodeRunRepo.Create() error = %v", err)
+	}
+
+	svc := NewWorkflowRunnerService(
+		jobRepo,
+		folderRepo,
+		repository.NewSnapshotRepository(database),
+		workflowDefRepo,
+		workflowRunRepo,
+		nodeRunRepo,
+		nodeSnapshotRepo,
+		fs.NewMockAdapter(),
+		nil,
+		nil,
+	)
+
+	manifest := &stubManifestBuilder{}
+	mapping := &stubMappingBuilder{}
+	validator := &stubOutputValidator{}
+	completion := &stubCompletionUpdater{}
+	svc.SetSourceManifestBuilder(manifest)
+	svc.SetOutputPipeline(mapping, validator, completion)
+
+	if err := svc.syncFolderStatusesByWorkflowRun(ctx, run.ID, "succeeded"); err != nil {
+		t.Fatalf("syncFolderStatusesByWorkflowRun() error = %v", err)
+	}
+
+	if manifest.ensureCalls != 1 {
+		t.Fatalf("manifest ensure calls = %d, want 1", manifest.ensureCalls)
+	}
+	if mapping.buildCalls != 1 {
+		t.Fatalf("mapping build calls = %d, want 1", mapping.buildCalls)
+	}
+	if validator.validateWorkflowRunCalls != 1 {
+		t.Fatalf("validator calls = %d, want 1", validator.validateWorkflowRunCalls)
+	}
+	if completion.syncCalls != 0 {
+		t.Fatalf("completion sync calls = %d, want 0", completion.syncCalls)
+	}
+	if completion.markPendingCalls != 1 || completion.lastFolderID != folder.ID {
+		t.Fatalf("completion mark_pending calls/folder = %d/%q, want 1/%q", completion.markPendingCalls, completion.lastFolderID, folder.ID)
+	}
+}
+
 func TestSyncFolderStatusesByWorkflowRunSucceededMarksFolderDoneAfterOutputCheck(t *testing.T) {
 	t.Parallel()
 

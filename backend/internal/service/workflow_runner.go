@@ -2058,7 +2058,7 @@ func (s *WorkflowRunnerService) syncFolderStatusesByWorkflowRun(ctx context.Cont
 	if s.outputPipelineReady() {
 		switch strings.TrimSpace(runStatus) {
 		case "succeeded":
-			if err := s.runOutputValidationChainForWorkflowRun(ctx, workflowRunID); err != nil {
+			if err := s.runOutputValidationChainForWorkflowRun(ctx, workflowRunID, nodeRuns); err != nil {
 				return fmt.Errorf("run output validation chain for workflow run %q: %w", workflowRunID, err)
 			}
 			return nil
@@ -2096,7 +2096,7 @@ func (s *WorkflowRunnerService) outputPipelineReady() bool {
 	return s.mappingSvc != nil && s.validatorSvc != nil && s.completionSvc != nil
 }
 
-func (s *WorkflowRunnerService) runOutputValidationChainForWorkflowRun(ctx context.Context, workflowRunID string) error {
+func (s *WorkflowRunnerService) runOutputValidationChainForWorkflowRun(ctx context.Context, workflowRunID string, nodeRuns []*repository.NodeRun) error {
 	if !s.outputPipelineReady() {
 		return nil
 	}
@@ -2107,15 +2107,36 @@ func (s *WorkflowRunnerService) runOutputValidationChainForWorkflowRun(ctx conte
 	if err != nil {
 		return fmt.Errorf("validate workflow run outputs: %w", err)
 	}
+	syncedAny := false
 	for _, check := range checks {
 		if check == nil {
 			continue
 		}
+		syncedAny = true
 		if err := s.completionSvc.Sync(ctx, check.FolderID, check); err != nil {
 			return fmt.Errorf("sync completion for folder %q: %w", check.FolderID, err)
 		}
 	}
+	if !syncedAny {
+		return s.markWorkflowRunFoldersPending(ctx, workflowRunID, nodeRuns)
+	}
 
+	return nil
+}
+
+func (s *WorkflowRunnerService) markWorkflowRunFoldersPending(ctx context.Context, workflowRunID string, nodeRuns []*repository.NodeRun) error {
+	if s.completionSvc == nil {
+		return nil
+	}
+	folderIDs, err := s.collectWorkflowRunFolderIDs(ctx, workflowRunID, nodeRuns)
+	if err != nil {
+		return err
+	}
+	for _, folderID := range folderIDs {
+		if markErr := s.completionSvc.MarkPending(ctx, folderID); markErr != nil {
+			return fmt.Errorf("mark folder %q pending: %w", folderID, markErr)
+		}
+	}
 	return nil
 }
 

@@ -47,11 +47,11 @@
       "label": "文件夹选择器",
       "config": {
         "folder_ids": [],
+        "path": "",
         "paths": [],
-        "saved_folder_ids": [],
-        "source_mode": "folders",
         "saved_folder_id": "5b656386-2c6d-41ff-86be-bf269397dc30",
-        "path": ""
+        "saved_folder_ids": [],
+        "source_mode": "folders"
       },
       "inputs": {},
       "ui_position": {
@@ -105,7 +105,7 @@
       "type": "move-node",
       "label": "移动节点",
       "config": {
-        "path_ref_key": "mixed:0",
+        "path_ref_key": "video:0",
         "path_ref_type": "output",
         "path_suffix": ""
       },

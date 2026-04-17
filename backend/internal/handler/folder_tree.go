@@ -371,6 +371,7 @@ func normalizeTreePath(raw string) string {
 	if trimmed == "" {
 		return ""
 	}
+	trimmed = strings.ReplaceAll(trimmed, "\\", "/")
 	return filepath.ToSlash(filepath.Clean(trimmed))
 }
 

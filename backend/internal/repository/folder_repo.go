@@ -41,6 +41,43 @@ func NewFolderRepository(db *sql.DB) FolderRepository {
 	return &SQLiteFolderRepository{db: db}
 }
 
+func normalizeFolderPathForCompare(raw string) string {
+	return strings.ReplaceAll(trimFolderPathComparePrefix(raw), "\\", "/")
+}
+
+func trimFolderPathComparePrefix(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	for len(trimmed) > 1 {
+		if strings.HasSuffix(trimmed, "/") && !isFolderPathRoot(trimmed) {
+			trimmed = strings.TrimSuffix(trimmed, "/")
+			continue
+		}
+		if strings.HasSuffix(trimmed, `\`) && !isFolderPathRoot(trimmed) {
+			trimmed = strings.TrimSuffix(trimmed, `\`)
+			continue
+		}
+		break
+	}
+	return trimmed
+}
+
+func isFolderPathRoot(path string) bool {
+	if path == "/" || path == `\` {
+		return true
+	}
+	if len(path) == 3 && path[1] == ':' && (path[2] == '/' || path[2] == '\\') {
+		return true
+	}
+	return false
+}
+
+func folderPathChildLike(prefix, separator string) string {
+	if strings.HasSuffix(prefix, "/") || strings.HasSuffix(prefix, `\`) {
+		return prefix + "%"
+	}
+	return prefix + separator + "%"
+}
+
 func (r *SQLiteFolderRepository) Upsert(ctx context.Context, f *Folder) error {
 	if f == nil {
 		return fmt.Errorf("folderRepo.Upsert: folder is required")
@@ -148,12 +185,16 @@ func (r *SQLiteFolderRepository) GetByPath(ctx context.Context, path string) (*F
 }
 
 func (r *SQLiteFolderRepository) GetCurrentByPath(ctx context.Context, path string) (*Folder, error) {
+	trimmedPath := trimFolderPathComparePrefix(path)
+	normalizedPath := normalizeFolderPathForCompare(path)
 	folder, err := scanFolder(
 		r.db.QueryRowContext(ctx, fmt.Sprintf(`
 SELECT %s
 FROM folders
-WHERE path = ? AND deleted_at IS NULL
-`, folderSelectColumns), path),
+WHERE deleted_at IS NULL AND (path = ? OR REPLACE(path, char(92), '/') = ?)
+ORDER BY CASE WHEN path = ? THEN 0 ELSE 1 END, updated_at DESC, scanned_at DESC, id ASC
+LIMIT 1
+`, folderSelectColumns), trimmedPath, normalizedPath, trimmedPath),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("folderRepo.GetCurrentByPath: %w", err)
@@ -163,15 +204,17 @@ WHERE path = ? AND deleted_at IS NULL
 }
 
 func (r *SQLiteFolderRepository) GetByHistoricalPath(ctx context.Context, path string) (*Folder, error) {
+	trimmedPath := trimFolderPathComparePrefix(path)
+	normalizedPath := normalizeFolderPathForCompare(path)
 	folder, err := scanFolder(
 		r.db.QueryRowContext(ctx, fmt.Sprintf(`
 SELECT %s
 FROM folders f
 JOIN folder_path_observations o ON o.folder_id = f.id
-WHERE o.path = ? AND f.deleted_at IS NULL
-ORDER BY o.last_seen_at DESC, o.first_seen_at DESC
+WHERE f.deleted_at IS NULL AND (o.path = ? OR REPLACE(o.path, char(92), '/') = ?)
+ORDER BY CASE WHEN o.path = ? THEN 0 ELSE 1 END, o.last_seen_at DESC, o.first_seen_at DESC
 LIMIT 1
-`, folderSelectColumnsWithAliasF), path),
+`, folderSelectColumnsWithAliasF), trimmedPath, normalizedPath, trimmedPath),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("folderRepo.GetByHistoricalPath: %w", err)
@@ -600,20 +643,29 @@ ORDER BY wr.updated_at DESC, wr.created_at DESC`,
 }
 
 func (r *SQLiteFolderRepository) ListByPathPrefix(ctx context.Context, prefix string) ([]*Folder, error) {
-	trimmedPrefix := strings.TrimSpace(prefix)
+	trimmedPrefix := trimFolderPathComparePrefix(prefix)
 	if trimmedPrefix == "" {
 		return []*Folder{}, nil
 	}
+	normalizedPrefix := normalizeFolderPathForCompare(trimmedPrefix)
 
 	rows, err := r.db.QueryContext(
 		ctx,
 		fmt.Sprintf(`SELECT %s
 FROM folders
-WHERE deleted_at IS NULL AND (path = ? OR path LIKE ? OR path LIKE ?)
-ORDER BY LENGTH(path) ASC, path ASC`, folderSelectColumns),
+WHERE deleted_at IS NULL AND (
+	path = ?
+	OR path LIKE ?
+	OR path LIKE ?
+	OR REPLACE(path, char(92), '/') = ?
+	OR REPLACE(path, char(92), '/') LIKE ?
+)
+ORDER BY LENGTH(REPLACE(path, char(92), '/')) ASC, path ASC`, folderSelectColumns),
 		trimmedPrefix,
-		trimmedPrefix+"/%",
-		trimmedPrefix+`\%`,
+		folderPathChildLike(trimmedPrefix, "/"),
+		folderPathChildLike(trimmedPrefix, `\`),
+		normalizedPrefix,
+		folderPathChildLike(normalizedPrefix, "/"),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("folderRepo.ListByPathPrefix query: %w", err)

@@ -116,6 +116,25 @@ func TestOutputMappingServiceBuildFallsBackToRunFolderIDForSplitItems(t *testing
 	}
 }
 
+func TestOutputMappingResolveFolderIDMatchesNormalizedChildPath(t *testing.T) {
+	t.Parallel()
+
+	items := []ProcessingItem{{
+		FolderID:    "folder-images",
+		SourcePath:  `E:\TEST\sample\yourpersonalwaifu\Images`,
+		CurrentPath: `E:\TEST\sample\yourpersonalwaifu\Images`,
+	}}
+	step := ProcessingStepResult{
+		SourcePath: "E:/TEST/sample/yourpersonalwaifu/Images/001.jpg",
+		TargetPath: "E:/target/photo/001.jpg",
+	}
+
+	got := outputMappingResolveFolderID(items, step, outputMappingFolderPathMap(items))
+	if got != "folder-images" {
+		t.Fatalf("outputMappingResolveFolderID() = %q, want folder-images", got)
+	}
+}
+
 func mustOutputMappingTypedOutputs(t *testing.T, values map[string]TypedValue) string {
 	t.Helper()
 

@@ -288,7 +288,8 @@ export const useLiveClassificationStore = create<LiveClassificationStore>((set, 
       if (payload.workflow_run_id) {
         runToFolderId[payload.workflow_run_id] = folderID
       }
-      return { ...next, runToFolderId }
+      const selectedFolderID = state.selectedFolderId || next.orderedIds[0] || ''
+      return { ...next, runToFolderId, selectedFolderId: selectedFolderID }
     })
 
     if (get().selectedFolderId === folderID) {
@@ -330,10 +331,15 @@ export const useLiveClassificationStore = create<LiveClassificationStore>((set, 
 
     set((state) => {
       const existing = state.itemsById[payload.folder_id]
-      const eventTime = payload.updated_at || new Date().toISOString()
-      if (existing && !isNewer(eventTime, existing.last_event_at)) {
+      const receivedAt = new Date().toISOString()
+      const eventTime = payload.updated_at || receivedAt
+      const existingRunID = existing?.workflow_run_id.trim() ?? ''
+      const payloadRunID = payload.workflow_run_id?.trim() ?? ''
+      const sameOrNewRun = payloadRunID !== '' && (existingRunID === '' || payloadRunID === existingRunID)
+      if (existing && !sameOrNewRun && !isNewer(eventTime, existing.last_event_at)) {
         return state
       }
+      const lastEventAt = existing && !isNewer(eventTime, existing.last_event_at) ? receivedAt : eventTime
 
       const nextItem: LiveClassificationItem = {
         folder_id: payload.folder_id,
@@ -349,8 +355,8 @@ export const useLiveClassificationStore = create<LiveClassificationStore>((set, 
         node_id: payload.node_id ?? existing?.node_id ?? '',
         node_type: payload.node_type ?? existing?.node_type ?? '',
         error: payload.error ?? existing?.error ?? '',
-        entered_at: existing?.entered_at ?? eventTime,
-        last_event_at: eventTime,
+        entered_at: existing?.entered_at ?? lastEventAt,
+        last_event_at: lastEventAt,
       }
 
       const merged = { ...state.itemsById, [payload.folder_id]: nextItem }

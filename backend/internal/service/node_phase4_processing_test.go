@@ -678,8 +678,8 @@ func TestMoveNodeExecutorMergeConflictPolicies(t *testing.T) {
 		if results[0].Status != "skipped" {
 			t.Fatalf("result status = %q, want skipped", results[0].Status)
 		}
-		if results[0].TargetPath != dstExisting {
-			t.Fatalf("target path = %q, want %q", results[0].TargetPath, dstExisting)
+		if results[0].TargetPath != normalizeWorkflowPath(dstExisting) {
+			t.Fatalf("target path = %q, want %q", results[0].TargetPath, normalizeWorkflowPath(dstExisting))
 		}
 
 		if !pathExists(t, filepath.Join(sourcePath, "001.mp4")) {
@@ -749,11 +749,13 @@ func TestMoveNodeExecutorMergeConflictPolicies(t *testing.T) {
 				t.Fatalf("result status = %q, want moved", result.Status)
 			}
 		}
-		if targets[filepath.Join(sourcePathA, "dup.txt")] != dstFirst {
-			t.Fatalf("first target = %q, want %q", targets[filepath.Join(sourcePathA, "dup.txt")], dstFirst)
+		firstSourcePath := normalizeWorkflowPath(filepath.Join(sourcePathA, "dup.txt"))
+		secondSourcePath := normalizeWorkflowPath(filepath.Join(sourcePathB, "dup.txt"))
+		if targets[firstSourcePath] != normalizeWorkflowPath(dstFirst) {
+			t.Fatalf("first target = %q, want %q", targets[firstSourcePath], normalizeWorkflowPath(dstFirst))
 		}
-		if targets[filepath.Join(sourcePathB, "dup.txt")] != dstRenamed {
-			t.Fatalf("second target = %q, want %q", targets[filepath.Join(sourcePathB, "dup.txt")], dstRenamed)
+		if targets[secondSourcePath] != normalizeWorkflowPath(dstRenamed) {
+			t.Fatalf("second target = %q, want %q", targets[secondSourcePath], normalizeWorkflowPath(dstRenamed))
 		}
 		if !pathExists(t, dstFirst) || !pathExists(t, dstRenamed) {
 			t.Fatalf("expected merged files should exist in target root")
@@ -1446,11 +1448,12 @@ func TestCompressNodeExecutorOutputsArchiveItemsAndCompatibility(t *testing.T) {
 	if !ok || len(items) != 1 {
 		t.Fatalf("items output type/len = %T/%d, want []ProcessingItem/1", output.Outputs["items"].Value, len(items))
 	}
-	if items[0].SourcePath != sourcePath {
-		t.Fatalf("items[0].SourcePath = %q, want %q", items[0].SourcePath, sourcePath)
+	normalizedSourcePath := normalizeWorkflowPath(sourcePath)
+	if items[0].SourcePath != normalizedSourcePath {
+		t.Fatalf("items[0].SourcePath = %q, want %q", items[0].SourcePath, normalizedSourcePath)
 	}
-	if items[0].CurrentPath != sourcePath {
-		t.Fatalf("items[0].CurrentPath = %q, want %q", items[0].CurrentPath, sourcePath)
+	if items[0].CurrentPath != normalizedSourcePath {
+		t.Fatalf("items[0].CurrentPath = %q, want %q", items[0].CurrentPath, normalizedSourcePath)
 	}
 
 	archiveItems, ok := output.Outputs["archive_items"].Value.([]ProcessingItem)
@@ -1458,10 +1461,10 @@ func TestCompressNodeExecutorOutputsArchiveItemsAndCompatibility(t *testing.T) {
 		t.Fatalf("archive_items output type/len = %T/%d, want []ProcessingItem/1", output.Outputs["archive_items"].Value, len(archiveItems))
 	}
 	archiveItem := archiveItems[0]
-	if archiveItem.SourcePath != sourcePath {
-		t.Fatalf("archive_items[0].SourcePath = %q, want original source %q", archiveItem.SourcePath, sourcePath)
+	if archiveItem.SourcePath != normalizedSourcePath {
+		t.Fatalf("archive_items[0].SourcePath = %q, want original source %q", archiveItem.SourcePath, normalizedSourcePath)
 	}
-	if archiveItem.CurrentPath == sourcePath {
+	if archiveItem.CurrentPath == normalizedSourcePath {
 		t.Fatalf("archive_items[0].CurrentPath should point to archive file, got current path %q", archiveItem.CurrentPath)
 	}
 	if got, want := archiveItem.ParentPath, filepath.Dir(archiveItem.CurrentPath); got != want {
@@ -1479,14 +1482,14 @@ func TestCompressNodeExecutorOutputsArchiveItemsAndCompatibility(t *testing.T) {
 	if archiveItem.Category != "manga" {
 		t.Fatalf("archive_items[0].Category = %q, want manga", archiveItem.Category)
 	}
-	if archiveItem.RootPath != sourcePath {
-		t.Fatalf("archive_items[0].RootPath = %q, want %q", archiveItem.RootPath, sourcePath)
+	if archiveItem.RootPath != normalizedSourcePath {
+		t.Fatalf("archive_items[0].RootPath = %q, want %q", archiveItem.RootPath, normalizedSourcePath)
 	}
 	if archiveItem.SourceKind != ProcessingItemSourceKindArchive {
 		t.Fatalf("archive_items[0].SourceKind = %q, want %q", archiveItem.SourceKind, ProcessingItemSourceKindArchive)
 	}
-	if archiveItem.OriginalSourcePath != sourcePath {
-		t.Fatalf("archive_items[0].OriginalSourcePath = %q, want %q", archiveItem.OriginalSourcePath, sourcePath)
+	if archiveItem.OriginalSourcePath != normalizedSourcePath {
+		t.Fatalf("archive_items[0].OriginalSourcePath = %q, want %q", archiveItem.OriginalSourcePath, normalizedSourcePath)
 	}
 	if archiveItem.Files != nil && len(archiveItem.Files) != 0 {
 		t.Fatalf("archive_items[0].Files should be nil or empty, got len=%d", len(archiveItem.Files))
@@ -1821,8 +1824,8 @@ func TestCompressNodeIntegrationArchiveItemsAndLegacyItems(t *testing.T) {
 		if len(legacyItems) != 1 {
 			t.Fatalf("len(items) = %d, want 1", len(legacyItems))
 		}
-		if legacyItems[0].SourcePath != sourcePath {
-			t.Fatalf("items[0].SourcePath = %q, want %q", legacyItems[0].SourcePath, sourcePath)
+		if legacyItems[0].SourcePath != normalizeWorkflowPath(sourcePath) {
+			t.Fatalf("items[0].SourcePath = %q, want %q", legacyItems[0].SourcePath, normalizeWorkflowPath(sourcePath))
 		}
 
 		moveOut, err := newPhase4MoveNodeExecutor(fs.NewOSAdapter(), nil).Execute(context.Background(), NodeExecutionInput{

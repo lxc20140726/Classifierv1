@@ -790,16 +790,17 @@ func parseReviewNodeRunInputPayload(nodeRun *repository.NodeRun) reviewNodeRunIn
 }
 
 func resolveFolderIDByStep(step ProcessingStepResult, folderPathMap map[string]string) string {
-	sourcePath := strings.TrimSpace(step.SourcePath)
-	targetPath := strings.TrimSpace(step.TargetPath)
+	sourcePath := normalizeWorkflowPath(step.SourcePath)
+	targetPath := normalizeWorkflowPath(step.TargetPath)
 	for folderID, knownPath := range folderPathMap {
-		if knownPath == "" {
+		normalizedKnownPath := normalizeWorkflowPath(knownPath)
+		if normalizedKnownPath == "" {
 			continue
 		}
-		if sourcePath != "" && (sourcePath == knownPath || strings.HasPrefix(sourcePath, knownPath+string(filepath.Separator))) {
+		if sourcePath != "" && (sourcePath == normalizedKnownPath || strings.HasPrefix(sourcePath, normalizedKnownPath+"/")) {
 			return folderID
 		}
-		if targetPath != "" && (targetPath == knownPath || strings.HasPrefix(targetPath, knownPath+string(filepath.Separator))) {
+		if targetPath != "" && (targetPath == normalizedKnownPath || strings.HasPrefix(targetPath, normalizedKnownPath+"/")) {
 			return folderID
 		}
 	}

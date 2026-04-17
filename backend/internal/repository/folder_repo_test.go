@@ -154,6 +154,53 @@ func TestFolderRepositoryList(t *testing.T) {
 	}
 }
 
+func TestFolderRepositoryListByPathPrefixMatchesMixedSeparators(t *testing.T) {
+	t.Parallel()
+
+	database := newTestDB(t)
+	repo := NewFolderRepository(database)
+	ctx := context.Background()
+
+	fixtures := []*Folder{
+		{ID: "root", Path: `E:\TEST\sample\yourpersonalwaifu`, Name: "yourpersonalwaifu", Category: "mixed", CategorySource: "auto", Status: "pending"},
+		{ID: "images", Path: "E:/TEST/sample/yourpersonalwaifu/Images", Name: "Images", Category: "photo", CategorySource: "workflow", Status: "pending"},
+		{ID: "videos", Path: "E:/TEST/sample/yourpersonalwaifu/Videos", Name: "Videos", Category: "video", CategorySource: "workflow", Status: "pending"},
+		{ID: "sibling", Path: "E:/TEST/sample/yourpersonalwaifu-other", Name: "yourpersonalwaifu-other", Category: "other", CategorySource: "auto", Status: "pending"},
+	}
+	for _, fixture := range fixtures {
+		if err := repo.Upsert(ctx, fixture); err != nil {
+			t.Fatalf("Upsert(%s) error = %v", fixture.ID, err)
+		}
+	}
+
+	current, err := repo.GetCurrentByPath(ctx, "E:/TEST/sample/yourpersonalwaifu")
+	if err != nil {
+		t.Fatalf("GetCurrentByPath() error = %v", err)
+	}
+	if current.ID != "root" {
+		t.Fatalf("GetCurrentByPath().ID = %q, want root", current.ID)
+	}
+
+	items, err := repo.ListByPathPrefix(ctx, `E:\TEST\sample\yourpersonalwaifu`)
+	if err != nil {
+		t.Fatalf("ListByPathPrefix() error = %v", err)
+	}
+
+	gotIDs := make([]string, 0, len(items))
+	for _, item := range items {
+		gotIDs = append(gotIDs, item.ID)
+	}
+	wantIDs := []string{"root", "images", "videos"}
+	if len(gotIDs) != len(wantIDs) {
+		t.Fatalf("ListByPathPrefix() IDs = %#v, want %#v", gotIDs, wantIDs)
+	}
+	for i, wantID := range wantIDs {
+		if gotIDs[i] != wantID {
+			t.Fatalf("ListByPathPrefix() IDs = %#v, want %#v", gotIDs, wantIDs)
+		}
+	}
+}
+
 func TestFolderRepositoryListSortsByUpdatedAtAndSize(t *testing.T) {
 	t.Parallel()
 
