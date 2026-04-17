@@ -144,6 +144,7 @@ export function useSSE() {
         ) {
           const folderId = payload.folder_id?.trim() ?? ''
           if (folderId !== '') {
+            void useLiveClassificationStore.getState().syncFolder(folderId)
             void useFolderStore.getState().syncFolder(folderId).finally(() => {
               notifyFolderActivityUpdated()
             })

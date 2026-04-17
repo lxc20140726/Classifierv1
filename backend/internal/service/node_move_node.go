@@ -99,7 +99,7 @@ func (e *phase4MoveNodeExecutor) Execute(ctx context.Context, input NodeExecutio
 		return e.executeLegacyMove(ctx, input, items, targetDir, conflictPolicy)
 	}
 
-	_, rootName, normalizedItems, err := e.normalizeAndValidateItems(ctx, items)
+	_, rootName, normalizedItems, err := e.normalizeAndValidateItems(ctx, items, input.Folder)
 	if err != nil {
 		return NodeExecutionOutput{}, fmt.Errorf("%s.Execute: %w", e.Type(), err)
 	}
@@ -421,7 +421,7 @@ func (e *phase4MoveNodeExecutor) executeLegacyMove(
 	}, nil
 }
 
-func (e *phase4MoveNodeExecutor) normalizeAndValidateItems(ctx context.Context, items []ProcessingItem) (string, string, []ProcessingItem, error) {
+func (e *phase4MoveNodeExecutor) normalizeAndValidateItems(ctx context.Context, items []ProcessingItem, folder *repository.Folder) (string, string, []ProcessingItem, error) {
 	normalized := make([]ProcessingItem, 0, len(items))
 	rootPath := ""
 	for _, raw := range items {
@@ -470,7 +470,7 @@ func (e *phase4MoveNodeExecutor) normalizeAndValidateItems(ctx context.Context, 
 	}
 
 	var derived bool
-	rootPath, normalized, derived = phase4MoveResolveExecutionRoot(normalized)
+	rootPath, normalized, derived = phase4MoveResolveExecutionRoot(normalized, folder)
 	if rootPath == "" {
 		for _, item := range normalized {
 			if rootPath == "" {
@@ -508,9 +508,28 @@ func (e *phase4MoveNodeExecutor) normalizeAndValidateItems(ctx context.Context, 
 	return rootPath, rootName, normalized, nil
 }
 
-func phase4MoveResolveExecutionRoot(items []ProcessingItem) (string, []ProcessingItem, bool) {
+func phase4MoveResolveExecutionRoot(items []ProcessingItem, folder *repository.Folder) (string, []ProcessingItem, bool) {
 	if len(items) == 0 {
 		return "", items, false
+	}
+
+	folderPath := ""
+	if folder != nil {
+		folderPath = normalizeWorkflowPath(strings.TrimSpace(folder.Path))
+	}
+	if folderPath != "" {
+		allWithinFolder := true
+		for _, item := range items {
+			rootPath := normalizeWorkflowPath(item.RootPath)
+			originalSourcePath := normalizeWorkflowPath(item.OriginalSourcePath)
+			if !phase4MovePathWithinRoot(folderPath, rootPath) && !phase4MovePathWithinRoot(folderPath, originalSourcePath) {
+				allWithinFolder = false
+				break
+			}
+		}
+		if allWithinFolder {
+			return folderPath, items, true
+		}
 	}
 
 	rootPaths := map[string]struct{}{}
@@ -532,9 +551,7 @@ func phase4MoveResolveExecutionRoot(items []ProcessingItem) (string, []Processin
 			return "", items, false
 		}
 
-		currentPath := processingItemCurrentPath(item)
-		relativePath := strings.TrimSpace(item.RelativePath)
-		if relativePath == "" && (currentPath == "" || currentPath != rootPath) && item.SourceKind != ProcessingItemSourceKindArchive {
+		if item.SourceKind != ProcessingItemSourceKindArchive && strings.TrimSpace(item.RelativePath) == "" && !phase4MoveDirectoryItemAnchoredAtRoot(item, rootPath) {
 			return "", items, false
 		}
 	}
@@ -547,6 +564,32 @@ func phase4MoveResolveExecutionRoot(items []ProcessingItem) (string, []Processin
 	}
 
 	return commonParent, items, true
+}
+
+func phase4MovePathWithinRoot(rootPath, candidate string) bool {
+	normalizedRoot := normalizeWorkflowPath(rootPath)
+	normalizedCandidate := normalizeWorkflowPath(candidate)
+	if normalizedRoot == "" || normalizedCandidate == "" {
+		return false
+	}
+	if normalizedCandidate == normalizedRoot {
+		return true
+	}
+	return strings.HasPrefix(normalizedCandidate, normalizedRoot+"/")
+}
+
+func phase4MoveDirectoryItemAnchoredAtRoot(item ProcessingItem, rootPath string) bool {
+	candidates := []string{
+		processingItemCurrentPath(item),
+		item.SourcePath,
+		item.OriginalSourcePath,
+	}
+	for _, candidate := range candidates {
+		if normalizeWorkflowPath(candidate) == rootPath {
+			return true
+		}
+	}
+	return false
 }
 
 func (e *phase4MoveNodeExecutor) moveDirectoryArtifacts(

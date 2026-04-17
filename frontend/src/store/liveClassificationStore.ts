@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-import { getFolderClassificationTree, listFolders } from '@/api/folders'
+import { getFolder, getFolderClassificationTree, listFolders } from '@/api/folders'
 import type {
   Folder,
   FolderClassificationLiveEvent,
@@ -102,6 +102,7 @@ interface LiveClassificationStore {
   isLoading: boolean
   error: string | null
   loadInitial: () => Promise<void>
+  syncFolder: (folderId: string) => Promise<void>
   selectFolder: (folderId: string) => Promise<void>
   loadTree: (folderId: string, force?: boolean) => Promise<void>
   handleScanStarted: (payload: { job_id: string }) => void
@@ -157,6 +158,28 @@ export const useLiveClassificationStore = create<LiveClassificationStore>((set, 
         isLoading: false,
         error: error instanceof Error ? error.message : '加载实时分类目录失败',
       })
+    }
+  },
+
+  async syncFolder(folderId) {
+    const normalizedFolderID = folderId.trim()
+    if (!normalizedFolderID) return
+
+    try {
+      const response = await getFolder(normalizedFolderID)
+      set((state) => {
+        const merged = { ...state.itemsById, [normalizedFolderID]: createItemFromFolder(response.data) }
+        const next = upsertAndTrim(merged)
+        const runToFolderId = { ...state.runToFolderId }
+        const workflowRunID = response.data.workflow_summary.classification.workflow_run_id?.trim() ?? ''
+        if (workflowRunID) {
+          runToFolderId[workflowRunID] = normalizedFolderID
+        }
+        const selectedFolderID = state.selectedFolderId || next.orderedIds[0] || ''
+        return { ...next, runToFolderId, selectedFolderId: selectedFolderID }
+      })
+    } catch {
+      // Keep the live panel resilient when a single folder sync fails.
     }
   },
 
@@ -303,7 +326,14 @@ export const useLiveClassificationStore = create<LiveClassificationStore>((set, 
 
     set((state) => {
       const existing = state.itemsById[folderID]
-      if (!existing) return state
+      if (!existing) {
+        return {
+          runToFolderId: {
+            ...state.runToFolderId,
+            [payload.workflow_run_id]: folderID,
+          },
+        }
+      }
       const now = new Date().toISOString()
       const nextItem: LiveClassificationItem = {
         ...existing,
@@ -320,6 +350,11 @@ export const useLiveClassificationStore = create<LiveClassificationStore>((set, 
       }
       return { ...next, runToFolderId }
     })
+
+    const existingItem = get().itemsById[folderID]
+    if (!existingItem) {
+      void get().syncFolder(folderID)
+    }
 
     if (get().selectedFolderId === folderID) {
       void get().loadTree(folderID, true)

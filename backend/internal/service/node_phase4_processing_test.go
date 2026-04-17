@@ -1145,6 +1145,64 @@ func TestMoveNodeExecutorMergeValidationAndArchiveFlatten(t *testing.T) {
 		}
 	})
 
+	t.Run("sibling_directory_root_path_items_with_staged_current_path_fallback_to_common_parent_root", func(t *testing.T) {
+		t.Parallel()
+
+		root := t.TempDir()
+		sourceRoot := filepath.Join(root, "source", "Kaede Matsushima [1982.11.17]")
+		rootPathA := filepath.Join(sourceRoot, "@Misty Kaede Matsushima[120P]")
+		rootPathB := filepath.Join(sourceRoot, "BEJEAN ON LINE Kaede Matsushima 2004.12 Hassya[51P]")
+		stagedPathA := filepath.Join(root, "staging", "@Misty Kaede Matsushima[120P]")
+		stagedPathB := filepath.Join(root, "staging", "BEJEAN ON LINE Kaede Matsushima 2004.12 Hassya[51P]")
+		targetDir := filepath.Join(root, "target")
+		mustMkdirAll(t, stagedPathA)
+		mustMkdirAll(t, stagedPathB)
+		if err := os.WriteFile(filepath.Join(stagedPathA, "a.jpg"), []byte("a"), 0o644); err != nil {
+			t.Fatalf("os.WriteFile(source A) error = %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(stagedPathB, "b.jpg"), []byte("b"), 0o644); err != nil {
+			t.Fatalf("os.WriteFile(source B) error = %v", err)
+		}
+
+		executor := newPhase4MoveNodeExecutor(fs.NewOSAdapter(), nil)
+		_, err := executor.Execute(context.Background(), NodeExecutionInput{
+			Node: repository.WorkflowGraphNode{Config: map[string]any{
+				"target_dir": targetDir,
+			}},
+			Inputs: testInputs(map[string]any{"items": []ProcessingItem{
+				{
+					SourcePath:         rootPathA,
+					CurrentPath:        stagedPathA,
+					RootPath:           rootPathA,
+					SourceKind:         ProcessingItemSourceKindDirectory,
+					OriginalSourcePath: rootPathA,
+					FolderName:         filepath.Base(rootPathA),
+					TargetName:         filepath.Base(rootPathA),
+				},
+				{
+					SourcePath:         rootPathB,
+					CurrentPath:        stagedPathB,
+					RootPath:           rootPathB,
+					SourceKind:         ProcessingItemSourceKindDirectory,
+					OriginalSourcePath: rootPathB,
+					FolderName:         filepath.Base(rootPathB),
+					TargetName:         filepath.Base(rootPathB),
+				},
+			}}),
+		})
+		if err != nil {
+			t.Fatalf("Execute() error = %v", err)
+		}
+
+		targetRoot := filepath.Join(targetDir, filepath.Base(sourceRoot))
+		if !pathExists(t, filepath.Join(targetRoot, "a.jpg")) {
+			t.Fatalf("merged output missing %q", filepath.Join(targetRoot, "a.jpg"))
+		}
+		if !pathExists(t, filepath.Join(targetRoot, "b.jpg")) {
+			t.Fatalf("merged output missing %q", filepath.Join(targetRoot, "b.jpg"))
+		}
+	})
+
 	t.Run("sibling_archive_root_path_items_fallback_to_common_parent_root", func(t *testing.T) {
 		t.Parallel()
 
@@ -1201,6 +1259,62 @@ func TestMoveNodeExecutorMergeValidationAndArchiveFlatten(t *testing.T) {
 		}
 		if !pathExists(t, filepath.Join(targetRoot, "BEJEAN ON LINE Kaede Matsushima 2004.12 Hassya[51P].cbz")) {
 			t.Fatalf("merged output missing %q", filepath.Join(targetRoot, "BEJEAN ON LINE Kaede Matsushima 2004.12 Hassya[51P].cbz"))
+		}
+	})
+
+	t.Run("folder_path_root_merges_album_and_grandchild_mixed_leaf_archives", func(t *testing.T) {
+		t.Parallel()
+
+		root := t.TempDir()
+		sourceRoot := filepath.Join(root, "source", "Kaede Matsushima [1982.11.17]")
+		albumRootPath := filepath.Join(sourceRoot, "@Misty Kaede Matsushima[120P]")
+		grandchildRootPath := filepath.Join(sourceRoot, "Graphis Gals 057 Kaede Matsushima", "ura")
+		archivePathA := filepath.Join(root, "archives", "@Misty Kaede Matsushima[120P].cbz")
+		archivePathB := filepath.Join(root, "archives", "ura.cbz")
+		targetDir := filepath.Join(root, "target")
+		mustMkdirAll(t, filepath.Dir(archivePathA))
+		if err := os.WriteFile(archivePathA, []byte("a"), 0o644); err != nil {
+			t.Fatalf("os.WriteFile(archive A) error = %v", err)
+		}
+		if err := os.WriteFile(archivePathB, []byte("b"), 0o644); err != nil {
+			t.Fatalf("os.WriteFile(archive B) error = %v", err)
+		}
+
+		executor := newPhase4MoveNodeExecutor(fs.NewOSAdapter(), nil)
+		_, err := executor.Execute(context.Background(), NodeExecutionInput{
+			Node:   repository.WorkflowGraphNode{Config: map[string]any{"target_dir": targetDir}},
+			Folder: &repository.Folder{Path: sourceRoot},
+			Inputs: testInputs(map[string]any{"items": []ProcessingItem{
+				{
+					SourcePath:         albumRootPath,
+					CurrentPath:        archivePathA,
+					RootPath:           albumRootPath,
+					RelativePath:       "photo",
+					SourceKind:         ProcessingItemSourceKindArchive,
+					OriginalSourcePath: filepath.Join(albumRootPath, ".photo-files"),
+				},
+				{
+					SourcePath:         grandchildRootPath,
+					CurrentPath:        archivePathB,
+					RootPath:           grandchildRootPath,
+					RelativePath:       "photo",
+					SourceKind:         ProcessingItemSourceKindArchive,
+					OriginalSourcePath: filepath.Join(grandchildRootPath, ".photo-files"),
+				},
+			}}),
+		})
+		if err != nil {
+			t.Fatalf("Execute() error = %v", err)
+		}
+
+		targetRoot := filepath.Join(targetDir, filepath.Base(sourceRoot))
+		targetA := filepath.Join(targetRoot, "@Misty Kaede Matsushima[120P].cbz")
+		targetB := filepath.Join(targetRoot, "Graphis Gals 057 Kaede Matsushima-ura.cbz")
+		if !pathExists(t, targetA) {
+			t.Fatalf("merged output missing %q", targetA)
+		}
+		if !pathExists(t, targetB) {
+			t.Fatalf("merged output missing %q", targetB)
 		}
 	})
 
@@ -1316,6 +1430,28 @@ func TestMoveNodeExecutorMergeValidationAndArchiveFlatten(t *testing.T) {
 			if !exists {
 				t.Fatalf("moved archive %q should exist under %q", name, targetRoot)
 			}
+		}
+	})
+
+	t.Run("folder_path_root_keeps_multiple_root_error_when_items_not_under_folder", func(t *testing.T) {
+		t.Parallel()
+
+		executor := newPhase4MoveNodeExecutor(fs.NewMockAdapter(), nil)
+		_, err := executor.Execute(context.Background(), NodeExecutionInput{
+			Node: repository.WorkflowGraphNode{Config: map[string]any{"target_dir": "/target"}},
+			Folder: &repository.Folder{
+				Path: "/source/a",
+			},
+			Inputs: testInputs(map[string]any{"items": []ProcessingItem{
+				{SourcePath: "/source/a/b", RootPath: "/source/a", SourceKind: ProcessingItemSourceKindDirectory},
+				{SourcePath: "/source/x/y", RootPath: "/source/x", SourceKind: ProcessingItemSourceKindDirectory},
+			}}),
+		})
+		if err == nil {
+			t.Fatalf("Execute() error = nil, want multiple root_path error")
+		}
+		if !stringsContains(err.Error(), "multiple root_path") {
+			t.Fatalf("error = %q, want multiple root_path", err.Error())
 		}
 	})
 }
