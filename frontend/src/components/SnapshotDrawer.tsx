@@ -661,7 +661,8 @@ export function SnapshotDrawer({ open, folderId, onClose }: SnapshotDrawerProps)
           {timelineItems.length > 0 && (
             <ol className="relative space-y-8 pl-8 before:absolute before:left-[15px] before:top-2 before:h-[calc(100%-0.5rem)] before:w-0.5 before:bg-foreground">
               {timelineItems.map((item) => {
-                const isReverting = item.snapshot != null && state.revertingId === item.snapshot.id
+                const snapshot = item.snapshot
+                const isReverting = snapshot != null && state.revertingId === snapshot.id
                 const metricLines = item.metricDisplay != null ? renderMetricLines(item.metricDisplay) : []
 
                 return (
@@ -680,11 +681,11 @@ export function SnapshotDrawer({ open, folderId, onClose }: SnapshotDrawerProps)
                           )}
                         </div>
 
-                        {item.snapshot?.status === 'committed' && isPathRevertibleSnapshot(item.snapshot) && (
+                        {snapshot?.status === 'committed' && isPathRevertibleSnapshot(snapshot) && (
                           <button
                             type="button"
                             disabled={state.revertingId !== null}
-                            onClick={() => void handleRevert(item.snapshot.id)}
+                            onClick={() => void handleRevert(snapshot.id)}
                             className="inline-flex items-center gap-1.5 border-2 border-foreground bg-background px-3 py-2 text-xs font-bold transition-all hover:-translate-y-0.5 hover:bg-foreground hover:text-background hover:shadow-hard disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0 disabled:hover:bg-background disabled:hover:text-foreground disabled:hover:shadow-none"
                           >
                             <RotateCcw className="h-4 w-4" />
@@ -693,7 +694,7 @@ export function SnapshotDrawer({ open, folderId, onClose }: SnapshotDrawerProps)
                         )}
                       </div>
 
-                      {state.failureDetail && item.snapshot != null && state.revertingId === null && item.snapshot.id === state.lastAttemptedId && (
+                      {state.failureDetail && snapshot != null && state.revertingId === null && snapshot.id === state.lastAttemptedId && (
                         <RevertFailurePanel detail={state.failureDetail} />
                       )}
 

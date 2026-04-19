@@ -7,10 +7,11 @@ import { useConfigStore } from '@/store/configStore'
 import type { AppConfig } from '@/types'
 
 type OutputDirKey = keyof NonNullable<AppConfig['output_dirs']>
+type OutputDirs = Record<OutputDirKey, string[]>
 
 interface FormState {
   scanInputDirs: string[]
-  outputDirs: NonNullable<AppConfig['output_dirs']>
+  outputDirs: OutputDirs
 }
 
 type PickerTarget =
@@ -180,7 +181,7 @@ export default function SettingsPage() {
       const cleanedOutputDirs = OUTPUT_DIR_KEYS.reduce((acc, key) => {
         acc[key] = form.outputDirs[key].map((item) => item.trim()).filter((item) => item.length > 0)
         return acc
-      }, {} as NonNullable<AppConfig['output_dirs']>)
+      }, {} as OutputDirs)
       await updateConfig({
         scan_input_dirs: cleanedScanInputDirs,
         output_dirs: cleanedOutputDirs,

@@ -1,8 +1,6 @@
 services:
   classifier:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: "${CLASSIFIER_IMAGE:-classifier}:${CLASSIFIER_TAG:-local}"
     user: "0:0"
     ports:
       - "${APP_PORT:-8080}:8080"

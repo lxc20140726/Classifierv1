@@ -20,13 +20,13 @@ import {
   type Connection,
   type ConnectionLineComponentProps,
   type Edge,
+  type InternalNode,
   type Node,
   type NodeProps,
   type OnConnect,
   type OnConnectEnd,
   type OnConnectStart,
   type OnReconnect,
-  type OnReconnectEnd,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { ArrowLeft, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Loader2, MousePointer, Play, Plus, RotateCcw, Save, Trash2, TriangleAlert, Wand2 } from 'lucide-react'
@@ -347,7 +347,7 @@ function getHandleFromPointerEvent(event: MouseEvent | TouchEvent) {
 }
 
 function getHandleAnchor(
-  nodeLookup: Map<string, EditorNode>,
+  nodeLookup: Map<string, InternalNode<Node>>,
   nodeId: string,
   handleType: 'source' | 'target',
   handleId?: string | null,
@@ -441,7 +441,7 @@ function isValidEditorEdge(
 }
 
 function isValidEditorConnection(
-  connection: Connection,
+  connection: Connection | Edge,
   getSchema: (nodeId: string) => NodeSchema | undefined,
 ) {
   if (!connection.source || !connection.target) return false
@@ -1943,15 +1943,15 @@ function WorkflowEditorScreen() {
         const connection: Connection = connectionState.fromHandle.type === 'target'
           ? {
             source: connectionState.toHandle.nodeId,
-            sourceHandle: connectionState.toHandle.id,
+            sourceHandle: connectionState.toHandle.id ?? null,
             target: connectionState.fromHandle.nodeId,
-            targetHandle: connectionState.fromHandle.id,
+            targetHandle: connectionState.fromHandle.id ?? null,
           }
           : {
             source: connectionState.fromHandle.nodeId,
-            sourceHandle: connectionState.fromHandle.id,
+            sourceHandle: connectionState.fromHandle.id ?? null,
             target: connectionState.toHandle.nodeId,
-            targetHandle: connectionState.toHandle.id,
+            targetHandle: connectionState.toHandle.id ?? null,
           }
         applyEditorConnection(connection)
       } else if (reconnectingEdgeRef.current && !reconnectHandledRef.current) {
@@ -1971,12 +1971,12 @@ function WorkflowEditorScreen() {
               source: reconnectingEdge.source,
               sourceHandle: reconnectingEdge.sourceHandle ?? null,
               target: droppedHandle.nodeId,
-              targetHandle: droppedHandle.handleId,
+              targetHandle: droppedHandle.handleId ?? null,
             }
             : connectionState.fromHandle.type === 'source' && droppedHandle.handleType === 'source'
               ? {
                 source: droppedHandle.nodeId,
-                sourceHandle: droppedHandle.handleId,
+                sourceHandle: droppedHandle.handleId ?? null,
                 target: reconnectingEdge.target,
                 targetHandle: reconnectingEdge.targetHandle ?? null,
               }
@@ -1998,7 +1998,7 @@ function WorkflowEditorScreen() {
     [applyEditorConnection, restoreReconnectingEdge],
   )
 
-  const onReconnectEnd = useMemo<OnReconnectEnd<Edge>>(
+  const onReconnectEnd = useMemo(
     () => () => {
       reconnectingEdgeRef.current = null
     },
@@ -2015,7 +2015,7 @@ function WorkflowEditorScreen() {
     [],
   )
 
-  const isValidConnection = useMemo<IsValidConnection<Connection>>(
+  const isValidConnection = useMemo<IsValidConnection<Edge>>(
     () => (connection) => {
       const getSchema = (nodeId: string) => {
         const node = nodesRef.current.find((item) => item.id === nodeId)

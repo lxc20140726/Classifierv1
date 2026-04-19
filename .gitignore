@@ -20,6 +20,7 @@ frontend/dist/
 frontend/.vite/
 
 coverage/
+output/
 *.out
 *.test
 

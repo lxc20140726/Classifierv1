@@ -1,0 +1,24 @@
+# 极空间 Docker Compose 项目导入模板
+# 使用前请先把镜像导入到极空间 Docker 镜像列表中，或把 image 改成你的镜像仓库地址。
+
+services:
+  classifier:
+    image: classifier:local
+    container_name: classifier
+    user: "0:0"
+    ports:
+      - "8080:8080"
+    environment:
+      CONFIG_DIR: /tmp/zfsv3/sata12/public/Tran/classifier-config
+      SOURCE_DIR: /tmp/zfsv3/sata12/public/Tran/待定
+      TARGET_DIR: /tmp/zfsv3/sata12/public/Tran/处理完成
+      DELETE_STAGING_DIR: /tmp/zfsv3/sata12/public/Tran/classifier-delete-staging
+      MAX_CONCURRENCY: "3"
+      TZ: Asia/Shanghai
+    volumes:
+      - /tmp/zfsv3/sata12/public/Tran:/tmp/zfsv3/sata12/public/Tran:rw
+    tmpfs:
+      - /tmp/work
+    cpus: 2.0
+    mem_limit: 1g
+    restart: unless-stopped
