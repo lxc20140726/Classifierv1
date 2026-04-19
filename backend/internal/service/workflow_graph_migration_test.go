@@ -283,6 +283,48 @@ func TestNormalizeWorkflowDefinitionGraphs_DoesNotForceBuiltinRulesOnCustomWorkf
 	}
 }
 
+func TestSetCompressNodeMixedPathRefByCategory(t *testing.T) {
+	t.Parallel()
+
+	mangaNode := &repository.WorkflowGraphNode{
+		Type: "compress-node",
+		Config: map[string]any{
+			"path_ref_type": "output",
+			"path_ref_key":  "mixed",
+		},
+	}
+	if changed := setCompressNodeMixedPathRefByCategory(mangaNode, "manga:0"); !changed {
+		t.Fatalf("setCompressNodeMixedPathRefByCategory() changed = false, want true")
+	}
+	if got := strings.TrimSpace(stringConfig(mangaNode.Config, "path_ref_key")); got != "manga:0" {
+		t.Fatalf("manga node path_ref_key = %q, want manga:0", got)
+	}
+
+	photoNode := &repository.WorkflowGraphNode{
+		Type: "compress-node",
+		Config: map[string]any{
+			"path_ref_type": "output",
+			"path_ref_key":  "mixed:0",
+		},
+	}
+	if changed := setCompressNodeMixedPathRefByCategory(photoNode, "photo:0"); !changed {
+		t.Fatalf("setCompressNodeMixedPathRefByCategory() changed = false, want true for mixed:0")
+	}
+	if got := strings.TrimSpace(stringConfig(photoNode.Config, "path_ref_key")); got != "photo:0" {
+		t.Fatalf("photo node path_ref_key = %q, want photo:0", got)
+	}
+
+	unchangedNode := &repository.WorkflowGraphNode{
+		Type: "compress-node",
+		Config: map[string]any{
+			"path_ref_type": "output",
+			"path_ref_key":  "photo:0",
+		},
+	}
+	if changed := setCompressNodeMixedPathRefByCategory(unchangedNode, "manga:0"); changed {
+		t.Fatalf("setCompressNodeMixedPathRefByCategory() changed = true, want false for non-mixed input")
+	}
+}
 func TestNormalizeWorkflowDefinitionGraphs_LeavesBlankThumbnailConfigUnchanged(t *testing.T) {
 	t.Parallel()
 

@@ -128,7 +128,7 @@
       "type": "compress-node",
       "label": "压缩节点",
       "config": {
-        "path_ref_key": "mixed",
+        "path_ref_key": "manga:0",
         "path_ref_type": "output"
       },
       "inputs": {
@@ -173,7 +173,7 @@
       "type": "compress-node",
       "label": "压缩节点",
       "config": {
-        "path_ref_key": "mixed",
+        "path_ref_key": "photo:0",
         "path_ref_type": "output"
       },
       "inputs": {
@@ -256,8 +256,9 @@
       "type": "move-node",
       "label": "移动节点",
       "config": {
-        "path_ref_key": "mixed",
-        "path_ref_type": "output"
+        "path_ref_key": "video:0",
+        "path_ref_type": "output",
+        "path_suffix": ""
       },
       "inputs": {
         "items": {

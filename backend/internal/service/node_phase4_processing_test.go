@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -204,6 +205,62 @@ func TestFolderSplitterExecutorInheritsRootFolderForGenericContainerChild(t *tes
 	}
 	if items[0].RelativePath != "Videos" || items[0].RootPath != "/root/album-a" {
 		t.Fatalf("items[0] relative/root = %q/%q, want Videos//root/album-a", items[0].RelativePath, items[0].RootPath)
+	}
+}
+
+func TestFolderSplitterExecutorPhotoDirectoryWithPhotoSubdirsStaysPhoto(t *testing.T) {
+	t.Parallel()
+
+	entry := ClassifiedEntry{
+		FolderID: "folder-root",
+		Path:     "/root/Top Album",
+		Name:     "Top Album",
+		Category: "photo",
+		Files: []FileEntry{
+			{Name: "Top.jpg", Ext: ".jpg", SizeBytes: 10},
+		},
+		Subtree: []ClassifiedEntry{
+			{
+				FolderID: "folder-photo",
+				Path:     "/root/Top Album/Photo[120P]",
+				Name:     "Photo[120P]",
+				Category: "photo",
+				Files: []FileEntry{
+					{Name: "001.jpg", Ext: ".jpg", SizeBytes: 10},
+				},
+			},
+		},
+	}
+
+	if category := folderSplitterResolveEntryCategory(entry); category != "photo" {
+		t.Fatalf("folderSplitterResolveEntryCategory(entry) = %q, want photo", category)
+	}
+
+	executor := newFolderSplitterExecutor()
+	out, err := executor.Execute(context.Background(), NodeExecutionInput{
+		Node: repository.WorkflowGraphNode{
+			Config: map[string]any{"split_with_subdirs": true},
+		},
+		Inputs: testInputs(map[string]any{
+			"entry": entry,
+		}),
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	items, ok := out.Outputs["items"].Value.([]ProcessingItem)
+	if !ok {
+		t.Fatalf("output type = %T, want []ProcessingItem", out.Outputs["items"].Value)
+	}
+	if len(items) != 1 {
+		t.Fatalf("len(items) = %d, want 1", len(items))
+	}
+	if got := items[0].Category; got != "photo" {
+		t.Fatalf("items[0].Category = %q, want photo", got)
+	}
+	if got := items[0].SourcePath; got != "/root/Top Album/Photo[120P]" {
+		t.Fatalf("items[0].SourcePath = %q, want /root/Top Album/Photo[120P]", got)
 	}
 }
 
@@ -1494,7 +1551,7 @@ func TestCompressNodeExecutorUnsupportedAndArchiveNaming(t *testing.T) {
 		}
 	})
 
-	t.Run("archive_name_prefers_root_path_name", func(t *testing.T) {
+	t.Run("archive_name_prefers_item_target_or_leaf_name", func(t *testing.T) {
 		t.Parallel()
 
 		root := t.TempDir()
@@ -1530,9 +1587,212 @@ func TestCompressNodeExecutorUnsupportedAndArchiveNaming(t *testing.T) {
 		if len(stepResults) != 1 {
 			t.Fatalf("len(step_results) = %d, want 1", len(stepResults))
 		}
-		wantPath := normalizeWorkflowPath(filepath.Join(archiveDir, "5k porn.cbz"))
+		wantPath := normalizeWorkflowPath(filepath.Join(archiveDir, "5kporn.e20.cbz"))
 		if got := normalizeWorkflowPath(stepResults[0].TargetPath); got != wantPath {
 			t.Fatalf("archive target path = %q, want %q", got, wantPath)
+		}
+	})
+
+	t.Run("dedupe_same_current_path_only_archives_once", func(t *testing.T) {
+		t.Parallel()
+
+		root := t.TempDir()
+		sourcePath := filepath.Join(root, "source", "album")
+		archiveDir := filepath.Join(root, "archives")
+		mustMkdirAll(t, sourcePath)
+		if err := os.WriteFile(filepath.Join(sourcePath, "001.jpg"), []byte("img"), 0o644); err != nil {
+			t.Fatalf("os.WriteFile(source) error = %v", err)
+		}
+
+		out, err := newCompressNodeExecutor(fs.NewOSAdapter()).Execute(context.Background(), NodeExecutionInput{
+			Node: repository.WorkflowGraphNode{
+				Config: map[string]any{
+					"target_dir": archiveDir,
+					"format":     "cbz",
+				},
+			},
+			Inputs: testInputs(map[string]any{
+				"items": []ProcessingItem{
+					{SourcePath: sourcePath, CurrentPath: sourcePath, TargetName: "album"},
+					{SourcePath: sourcePath, CurrentPath: sourcePath, TargetName: "album"},
+				},
+			}),
+		})
+		if err != nil {
+			t.Fatalf("Execute() error = %v", err)
+		}
+
+		stepResults := out.Outputs["step_results"].Value.([]ProcessingStepResult)
+		if len(stepResults) != 1 {
+			t.Fatalf("len(step_results) = %d, want 1", len(stepResults))
+		}
+		archiveItems := out.Outputs["archive_items"].Value.([]ProcessingItem)
+		if len(archiveItems) != 1 {
+			t.Fatalf("len(archive_items) = %d, want 1", len(archiveItems))
+		}
+	})
+
+	t.Run("mixed_output_prefers_category_output_dir", func(t *testing.T) {
+		t.Parallel()
+
+		root := t.TempDir()
+		sourcePath := filepath.Join(root, "source", "album")
+		photoOut := filepath.Join(root, "output", "photo")
+		mixedOut := filepath.Join(root, "output", "mixed")
+		mustMkdirAll(t, sourcePath)
+		if err := os.WriteFile(filepath.Join(sourcePath, "001.jpg"), []byte("img"), 0o644); err != nil {
+			t.Fatalf("os.WriteFile(source) error = %v", err)
+		}
+
+		out, err := newCompressNodeExecutor(fs.NewOSAdapter()).Execute(context.Background(), NodeExecutionInput{
+			Node: repository.WorkflowGraphNode{
+				Config: map[string]any{
+					"path_ref_type": "output",
+					"path_ref_key":  "mixed",
+					"format":        "cbz",
+				},
+			},
+			AppConfig: &repository.AppConfig{
+				OutputDirs: repository.AppConfigOutputDirs{
+					Photo: []string{photoOut},
+					Mixed: []string{mixedOut},
+				},
+			},
+			Inputs: testInputs(map[string]any{
+				"items": []ProcessingItem{{SourcePath: sourcePath, Category: "photo", TargetName: "album"}},
+			}),
+		})
+		if err != nil {
+			t.Fatalf("Execute() error = %v", err)
+		}
+
+		stepResults := out.Outputs["step_results"].Value.([]ProcessingStepResult)
+		if len(stepResults) != 1 {
+			t.Fatalf("len(step_results) = %d, want 1", len(stepResults))
+		}
+		targetPath := normalizeWorkflowPath(stepResults[0].TargetPath)
+		if !strings.HasPrefix(targetPath, normalizeWorkflowPath(photoOut)+"/") {
+			t.Fatalf("target path = %q, want prefix %q", targetPath, normalizeWorkflowPath(photoOut)+"/")
+		}
+		if strings.HasPrefix(targetPath, normalizeWorkflowPath(mixedOut)+"/") {
+			t.Fatalf("target path = %q should not use mixed output dir", targetPath)
+		}
+	})
+
+	t.Run("recursive_leaf_items_use_distinct_stable_archive_names", func(t *testing.T) {
+		t.Parallel()
+
+		root := t.TempDir()
+		sourceRoot := filepath.Join(root, "source", "RootAlbum")
+		leafA := filepath.Join(sourceRoot, "Leaf-A")
+		leafB := filepath.Join(sourceRoot, "Leaf-B")
+		archiveDir := filepath.Join(root, "archives")
+		mustMkdirAll(t, leafA)
+		mustMkdirAll(t, leafB)
+		if err := os.WriteFile(filepath.Join(leafA, "001.jpg"), []byte("a"), 0o644); err != nil {
+			t.Fatalf("os.WriteFile(leafA) error = %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(leafB, "001.jpg"), []byte("b"), 0o644); err != nil {
+			t.Fatalf("os.WriteFile(leafB) error = %v", err)
+		}
+
+		out, err := newCompressNodeExecutor(fs.NewOSAdapter()).Execute(context.Background(), NodeExecutionInput{
+			Node: repository.WorkflowGraphNode{
+				Config: map[string]any{
+					"target_dir": archiveDir,
+					"format":     "cbz",
+				},
+			},
+			Inputs: testInputs(map[string]any{
+				"items": []ProcessingItem{
+					{SourcePath: leafA, RootPath: sourceRoot, RelativePath: "Leaf-A", TargetName: "RootAlbum"},
+					{SourcePath: leafB, RootPath: sourceRoot, RelativePath: "Leaf-B", TargetName: "RootAlbum"},
+				},
+			}),
+		})
+		if err != nil {
+			t.Fatalf("Execute() error = %v", err)
+		}
+
+		stepResults := out.Outputs["step_results"].Value.([]ProcessingStepResult)
+		if len(stepResults) != 2 {
+			t.Fatalf("len(step_results) = %d, want 2", len(stepResults))
+		}
+		targets := map[string]struct{}{}
+		for _, result := range stepResults {
+			targets[filepath.Base(result.TargetPath)] = struct{}{}
+		}
+		for _, expected := range []string{"Leaf-A.cbz", "Leaf-B.cbz"} {
+			if _, ok := targets[expected]; !ok {
+				t.Fatalf("missing expected archive name %q in %v", expected, targets)
+			}
+		}
+	})
+
+	t.Run("concurrent_nodes_allocate_distinct_archive_names", func(t *testing.T) {
+		t.Parallel()
+
+		root := t.TempDir()
+		archiveDir := filepath.Join(root, "archives")
+		sourceA := filepath.Join(root, "source-a", "Album")
+		sourceB := filepath.Join(root, "source-b", "Album")
+		mustMkdirAll(t, sourceA)
+		mustMkdirAll(t, sourceB)
+		if err := os.WriteFile(filepath.Join(sourceA, "001.jpg"), []byte("a"), 0o644); err != nil {
+			t.Fatalf("os.WriteFile(sourceA) error = %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(sourceB, "001.jpg"), []byte("b"), 0o644); err != nil {
+			t.Fatalf("os.WriteFile(sourceB) error = %v", err)
+		}
+
+		type runResult struct {
+			path string
+			err  error
+		}
+		results := make(chan runResult, 2)
+		start := make(chan struct{})
+		run := func(source string) {
+			<-start
+			out, err := newCompressNodeExecutor(fs.NewOSAdapter()).Execute(context.Background(), NodeExecutionInput{
+				Node: repository.WorkflowGraphNode{
+					Config: map[string]any{
+						"target_dir": archiveDir,
+						"format":     "cbz",
+					},
+				},
+				Inputs: testInputs(map[string]any{
+					"items": []ProcessingItem{{SourcePath: source, TargetName: "Album"}},
+				}),
+			})
+			if err != nil {
+				results <- runResult{err: err}
+				return
+			}
+			stepResults := out.Outputs["step_results"].Value.([]ProcessingStepResult)
+			if len(stepResults) != 1 {
+				results <- runResult{err: fmt.Errorf("len(step_results) = %d, want 1", len(stepResults))}
+				return
+			}
+			results <- runResult{path: normalizeWorkflowPath(stepResults[0].TargetPath)}
+		}
+
+		go run(sourceA)
+		go run(sourceB)
+		close(start)
+
+		first := <-results
+		second := <-results
+		if first.err != nil {
+			t.Fatalf("first concurrent execute error = %v", first.err)
+		}
+		if second.err != nil {
+			t.Fatalf("second concurrent execute error = %v", second.err)
+		}
+		if first.path == second.path {
+			t.Fatalf("concurrent archives collided on same target path %q", first.path)
+		}
+		if !pathExists(t, first.path) || !pathExists(t, second.path) {
+			t.Fatalf("concurrent archive paths should both exist: %q, %q", first.path, second.path)
 		}
 	})
 }

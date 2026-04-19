@@ -713,24 +713,31 @@ func processingStepResultsFromNodeRun(nodeRun *repository.NodeRun, typedOutputs 
 		if format != "cbz" && format != "zip" {
 			format = "cbz"
 		}
-		archiveDir := resolveWorkflowNodePath(cfg, inputPayload.AppConfig, workflowNodePathOptions{
-			DefaultType:      workflowPathRefTypeOutput,
-			DefaultOutputKey: "mixed",
-			LegacyKeys:       []string{"target_dir", "output_dir"},
-		})
-		if archiveDir == "" {
-			archiveDir = ".archives"
-		}
-		archiveDir = normalizeWorkflowPath(archiveDir)
-
 		out := make([]ProcessingStepResult, 0, len(items))
+		seenSourcePaths := map[string]struct{}{}
+		archiveNameCounts := map[string]int{}
 		for _, item := range items {
 			sourcePath := processingItemCurrentPath(item)
-			name := processingItemArtifactName(item)
+			if sourcePath == "" {
+				continue
+			}
+			sourceKey := normalizeWorkflowPath(sourcePath)
+			if _, exists := seenSourcePaths[sourceKey]; exists {
+				continue
+			}
+			seenSourcePaths[sourceKey] = struct{}{}
+
+			archiveDir := compressNodeArchiveDirForItem(cfg, inputPayload.AppConfig, item)
+			if archiveDir == "" {
+				archiveDir = ".archives"
+			}
+			archiveDir = normalizeWorkflowPath(archiveDir)
+
+			name := compressNodeArchiveBaseName(item)
 			if name == "" {
 				name = strings.TrimSpace(filepath.Base(sourcePath))
 			}
-			targetPath := normalizeWorkflowPath(joinWorkflowPath(archiveDir, name+"."+format))
+			targetPath := normalizeWorkflowPath(joinWorkflowPath(archiveDir, compressNodeReviewArchiveName(archiveNameCounts, archiveDir, name, format)))
 			out = append(out, ProcessingStepResult{
 				SourcePath: sourcePath,
 				TargetPath: targetPath,
@@ -772,6 +779,21 @@ func processingStepResultsFromNodeRun(nodeRun *repository.NodeRun, typedOutputs 
 	default:
 		return fallbackByNodeType
 	}
+}
+
+func compressNodeReviewArchiveName(counts map[string]int, archiveDir, baseName, format string) string {
+	normalizedDir := normalizeWorkflowPath(archiveDir)
+	normalizedBase := strings.TrimSpace(baseName)
+	if normalizedBase == "" {
+		normalizedBase = "archive"
+	}
+	key := normalizedDir + "|" + normalizedBase + "|" + strings.TrimSpace(format)
+	index := counts[key]
+	counts[key] = index + 1
+	if index == 0 {
+		return normalizedBase + "." + format
+	}
+	return fmt.Sprintf("%s (%d).%s", normalizedBase, index, format)
 }
 
 func parseReviewNodeRunInputPayload(nodeRun *repository.NodeRun) reviewNodeRunInputPayload {

@@ -280,6 +280,17 @@ func normalizeBuiltinGenericProcessingGraph(def *repository.WorkflowDefinition, 
 	}
 
 	changed := false
+	if index, ok := nodeIndexByID["compress-node-12"]; ok {
+		if setCompressNodeMixedPathRefByCategory(&graph.Nodes[index], "manga:0") {
+			changed = true
+		}
+	}
+	if index, ok := nodeIndexByID["compress-node-13"]; ok {
+		if setCompressNodeMixedPathRefByCategory(&graph.Nodes[index], "photo:0") {
+			changed = true
+		}
+	}
+
 	otherIndex, ok := nodeIndexByID["g-rename-mixed-other"]
 	if !ok {
 		graph.Nodes = append(graph.Nodes, repository.WorkflowGraphNode{
@@ -487,5 +498,46 @@ func migrateNodePathConfig(node *repository.WorkflowGraphNode) bool {
 		}
 	}
 
+	return changed
+}
+
+func setCompressNodeMixedPathRefByCategory(node *repository.WorkflowGraphNode, expectedRef string) bool {
+	if node == nil || strings.TrimSpace(node.Type) != "compress-node" {
+		return false
+	}
+	if node.Config == nil {
+		node.Config = map[string]any{}
+	}
+
+	refType := strings.ToLower(strings.TrimSpace(stringConfig(node.Config, "path_ref_type")))
+	refKey := strings.TrimSpace(stringConfig(node.Config, "path_ref_key"))
+	legacyRefType, legacyRefKey := legacyPathRefFromConfig(node.Config)
+	if refType == "" {
+		refType = legacyRefType
+	}
+	if refKey == "" {
+		refKey = legacyRefKey
+	}
+	if refType == "" {
+		refType = workflowPathRefTypeOutput
+	}
+
+	if refType != workflowPathRefTypeOutput {
+		return false
+	}
+	category, index := parseOutputDirRef(refKey)
+	if category != "mixed" || index != 0 {
+		return false
+	}
+
+	changed := false
+	if strings.TrimSpace(stringConfig(node.Config, "path_ref_type")) != workflowPathRefTypeOutput {
+		node.Config["path_ref_type"] = workflowPathRefTypeOutput
+		changed = true
+	}
+	if strings.TrimSpace(stringConfig(node.Config, "path_ref_key")) != expectedRef {
+		node.Config["path_ref_key"] = expectedRef
+		changed = true
+	}
 	return changed
 }

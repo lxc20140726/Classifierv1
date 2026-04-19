@@ -426,6 +426,25 @@ func folderSplitterShouldTreatAsMixedDirectory(entry ClassifiedEntry) bool {
 		return false
 	}
 
+	if folderSplitterHasOnlyImageFiles(entry.Files) {
+		hasDirectChild := false
+		for _, child := range entry.Subtree {
+			if !folderSplitterIsDirectChild(entry, child) {
+				continue
+			}
+			if mixedLeafRouterIsInternalStagingDir(strings.TrimSpace(child.Name)) {
+				continue
+			}
+			hasDirectChild = true
+			if folderSplitterContainsBusinessMedia(child) {
+				return true
+			}
+		}
+		if hasDirectChild {
+			return false
+		}
+	}
+
 	for _, child := range entry.Subtree {
 		if !folderSplitterIsDirectChild(entry, child) {
 			continue
@@ -437,4 +456,24 @@ func folderSplitterShouldTreatAsMixedDirectory(entry ClassifiedEntry) bool {
 	}
 
 	return false
+}
+
+func folderSplitterHasOnlyImageFiles(files []FileEntry) bool {
+	hasImage := false
+	for _, file := range files {
+		ext := strings.ToLower(strings.TrimSpace(file.Ext))
+		if ext == "" {
+			ext = strings.ToLower(strings.TrimSpace(filepath.Ext(file.Name)))
+		}
+		if ext == "" {
+			continue
+		}
+		if videoExtsSet[ext] {
+			return false
+		}
+		if imageExtsSet[ext] {
+			hasImage = true
+		}
+	}
+	return hasImage
 }

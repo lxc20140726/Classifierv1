@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/liqiye/classifier/internal/fs"
 	"github.com/liqiye/classifier/internal/repository"
@@ -16,6 +18,7 @@ import (
 const compressNodeExecutorType = "compress-node"
 
 var defaultCompressNodeIncludePatterns = []string{"*.jpg", "*.jpeg", "*.png", "*.webp", "*.gif", "*.bmp"}
+var compressNodeArchiveDirLocks sync.Map
 
 type compressNodeExecutor struct {
 	fs fs.FSAdapter
@@ -71,41 +74,32 @@ func (e *compressNodeExecutor) Execute(ctx context.Context, input NodeExecutionI
 	}
 	ext := "." + format
 
-	archiveDir := resolveWorkflowNodePath(input.Node.Config, input.AppConfig, workflowNodePathOptions{
-		DefaultType:      workflowPathRefTypeOutput,
-		DefaultOutputKey: "mixed",
-		LegacyKeys:       []string{"target_dir", "output_dir"},
-	})
-	if archiveDir == "" {
-		archiveDir = ".archives"
-	}
-
-	createTarget := folderSplitterBoolConfig(input.Node.Config, "create_target_if_missing", true)
-	exists, err := e.fs.Exists(ctx, archiveDir)
-	if err != nil {
-		return NodeExecutionOutput{}, fmt.Errorf("%s.Execute: check archive dir %q: %w", e.Type(), archiveDir, err)
-	}
-	if !exists {
-		if !createTarget {
-			return NodeExecutionOutput{}, fmt.Errorf("%s.Execute: archive dir %q does not exist and create_target_if_missing is false", e.Type(), archiveDir)
-		}
-		if err := e.fs.MkdirAll(ctx, archiveDir, 0o755); err != nil {
-			return NodeExecutionOutput{}, fmt.Errorf("%s.Execute: create archive dir %q: %w", e.Type(), archiveDir, err)
-		}
-	}
-
 	includePatterns := stringSliceConfig(input.Node.Config, "include_patterns", defaultCompressNodeIncludePatterns)
 	excludePatterns := stringSliceConfig(input.Node.Config, "exclude_patterns", nil)
+	createTarget := folderSplitterBoolConfig(input.Node.Config, "create_target_if_missing", true)
 
-	stepResults := make([]ProcessingStepResult, 0, len(items))
-	archiveItems := make([]ProcessingItem, 0, len(items))
-	archives := make([]string, 0, len(items))
+	uniqueItems := make([]ProcessingItem, 0, len(items))
+	seenSourcePaths := map[string]struct{}{}
 	for _, item := range items {
 		item = processingItemNormalize(item)
 		sourcePath := processingItemCurrentPath(item)
 		if sourcePath == "" {
 			return NodeExecutionOutput{}, fmt.Errorf("%s.Execute: item current_path is required", e.Type())
 		}
+		sourceKey := normalizeWorkflowPath(sourcePath)
+		if _, exists := seenSourcePaths[sourceKey]; exists {
+			continue
+		}
+		seenSourcePaths[sourceKey] = struct{}{}
+		uniqueItems = append(uniqueItems, item)
+	}
+
+	stepResults := make([]ProcessingStepResult, 0, len(uniqueItems))
+	archiveItems := make([]ProcessingItem, 0, len(uniqueItems))
+	archives := make([]string, 0, len(uniqueItems))
+	ensuredDirs := map[string]struct{}{}
+	for _, item := range uniqueItems {
+		sourcePath := processingItemCurrentPath(item)
 
 		info, err := e.fs.Stat(ctx, sourcePath)
 		if err != nil {
@@ -115,19 +109,44 @@ func (e *compressNodeExecutor) Execute(ctx context.Context, input NodeExecutionI
 			return NodeExecutionOutput{}, fmt.Errorf("%s.Execute: source path %q is not a folder", e.Type(), sourcePath)
 		}
 
-		archiveName := processingItemArtifactName(item)
+		archiveName := compressNodeArchiveBaseName(item)
 		if archiveName == "" {
 			archiveName = info.Name
 		}
 
+		archiveDir := compressNodeArchiveDirForItem(input.Node.Config, input.AppConfig, item)
+		if archiveDir == "" {
+			archiveDir = ".archives"
+		}
+		archiveDir = normalizeWorkflowPath(archiveDir)
+		if _, ensured := ensuredDirs[archiveDir]; !ensured {
+			exists, err := e.fs.Exists(ctx, archiveDir)
+			if err != nil {
+				return NodeExecutionOutput{}, fmt.Errorf("%s.Execute: check archive dir %q: %w", e.Type(), archiveDir, err)
+			}
+			if !exists {
+				if !createTarget {
+					return NodeExecutionOutput{}, fmt.Errorf("%s.Execute: archive dir %q does not exist and create_target_if_missing is false", e.Type(), archiveDir)
+				}
+				if err := e.fs.MkdirAll(ctx, archiveDir, 0o755); err != nil {
+					return NodeExecutionOutput{}, fmt.Errorf("%s.Execute: create archive dir %q: %w", e.Type(), archiveDir, err)
+				}
+			}
+			ensuredDirs[archiveDir] = struct{}{}
+		}
+
+		unlock := compressNodeLockArchiveDir(archiveDir)
 		archivePath, err := compressNodeResolveArchivePath(ctx, e.fs, archiveDir, archiveName, ext)
 		if err != nil {
+			unlock()
 			return NodeExecutionOutput{}, fmt.Errorf("%s.Execute: resolve archive name for %q: %w", e.Type(), sourcePath, err)
 		}
 
 		if err := e.createArchive(ctx, sourcePath, archivePath, includePatterns, excludePatterns); err != nil {
+			unlock()
 			return NodeExecutionOutput{}, fmt.Errorf("%s.Execute: create archive for %q: %w", e.Type(), sourcePath, err)
 		}
+		unlock()
 		archives = append(archives, archivePath)
 		archiveItems = append(archiveItems, compressNodeBuildArchiveItem(item, archivePath))
 		stepResults = append(stepResults, ProcessingStepResult{
@@ -139,14 +158,14 @@ func (e *compressNodeExecutor) Execute(ctx context.Context, input NodeExecutionI
 			Status:     "succeeded",
 		})
 		if input.ProgressFn != nil {
-			percent := len(archives) * 100 / len(items)
-			input.ProgressFn(percent, fmt.Sprintf("已完成 %d/%d 项压缩", len(archives), len(items)))
+			percent := len(archives) * 100 / len(uniqueItems)
+			input.ProgressFn(percent, fmt.Sprintf("compressed %d/%d items", len(archives), len(uniqueItems)))
 		}
 	}
 
 	return NodeExecutionOutput{
 		Outputs: map[string]TypedValue{
-			"items":         {Type: PortTypeProcessingItemList, Value: items},
+			"items":         {Type: PortTypeProcessingItemList, Value: uniqueItems},
 			"archive_items": {Type: PortTypeProcessingItemList, Value: archiveItems},
 			"step_results":  {Type: PortTypeProcessingStepResultList, Value: stepResults},
 		},
@@ -530,6 +549,116 @@ func compressNodeResolveArchivePath(ctx context.Context, fsAdapter fs.FSAdapter,
 	}
 
 	return "", fmt.Errorf("failed to allocate archive name for %q", primary)
+}
+
+func compressNodeArchiveBaseName(item ProcessingItem) string {
+	normalized := processingItemNormalize(item)
+	if relative := compressNodeRelativePathBase(normalized.RelativePath); relative != "" {
+		return relative
+	}
+
+	if preferred := strings.TrimSpace(phase4MoveItemName(normalized)); preferred != "" && !compressNodeIsGenericArchiveBase(preferred) {
+		return preferred
+	}
+
+	for _, candidate := range []string{
+		normalizeWorkflowPath(normalized.CurrentPath),
+		normalizeWorkflowPath(normalized.SourcePath),
+	} {
+		base := compressNodeFileBaseName(candidate)
+		if base != "" && !compressNodeIsGenericArchiveBase(base) {
+			return base
+		}
+	}
+
+	return strings.TrimSpace(processingItemArtifactName(normalized))
+}
+
+func compressNodeRelativePathBase(relativePath string) string {
+	trimmed := normalizeWorkflowPath(relativePath)
+	if trimmed == "" || trimmed == "." || trimmed == "/" {
+		return ""
+	}
+	base := compressNodeFileBaseName(trimmed)
+	if compressNodeIsGenericArchiveBase(base) {
+		return ""
+	}
+	return base
+}
+
+func compressNodeFileBaseName(path string) string {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return ""
+	}
+	base := strings.TrimSpace(filepath.Base(trimmed))
+	if base == "" || base == "." || base == string(filepath.Separator) {
+		return ""
+	}
+	return base
+}
+
+func compressNodeIsGenericArchiveBase(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "", "photo", "manga", "video", "other", "mixed", "mixed_leaf", "unsupported", "__photo", "__manga", "__video", "__unsupported":
+		return true
+	default:
+		return false
+	}
+}
+
+func compressNodeArchiveDirForItem(config map[string]any, appConfig *repository.AppConfig, item ProcessingItem) string {
+	baseDir := resolveWorkflowNodePath(config, appConfig, workflowNodePathOptions{
+		DefaultType:      workflowPathRefTypeOutput,
+		DefaultOutputKey: "mixed",
+		LegacyKeys:       []string{"target_dir", "output_dir"},
+	})
+	if baseDir == "" {
+		baseDir = ".archives"
+	}
+
+	refType := strings.ToLower(strings.TrimSpace(stringConfig(config, "path_ref_type")))
+	refKey := strings.TrimSpace(stringConfig(config, "path_ref_key"))
+	legacyRefType, legacyRefKey := legacyPathRefFromConfig(config)
+	if refType == "" {
+		refType = legacyRefType
+	}
+	if refKey == "" {
+		refKey = legacyRefKey
+	}
+	if refType != workflowPathRefTypeOutput {
+		return normalizeWorkflowPath(baseDir)
+	}
+
+	category, index := parseOutputDirRef(refKey)
+	if category != "mixed" || index < 0 {
+		return normalizeWorkflowPath(baseDir)
+	}
+
+	itemCategory := strings.ToLower(strings.TrimSpace(item.Category))
+	switch itemCategory {
+	case "photo", "manga", "video", "other":
+	default:
+		return normalizeWorkflowPath(baseDir)
+	}
+
+	preferredRefKey := itemCategory + ":" + strconv.Itoa(index)
+	preferredDir := resolveOutputDirByKey(appConfig, preferredRefKey)
+	if preferredDir == "" {
+		return normalizeWorkflowPath(baseDir)
+	}
+	return normalizeWorkflowPath(preferredDir)
+}
+
+func compressNodeLockArchiveDir(archiveDir string) func() {
+	key := normalizeWorkflowPath(archiveDir)
+	if key == "" {
+		key = "."
+	}
+	lockEntry, _ := compressNodeArchiveDirLocks.LoadOrStore(key, &sync.Mutex{})
+	lock := lockEntry.(*sync.Mutex)
+	lock.Lock()
+	return lock.Unlock
 }
 
 func compressNodeShouldInclude(relPath string, includePatterns []string) bool {
