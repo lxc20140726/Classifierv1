@@ -260,6 +260,7 @@ function NodeRunsPanel({ run, highlightFailedNodes }: { run: WorkflowRun; highli
             <th className="py-2 pr-4 text-left font-black tracking-widest">类型</th>
             <th className="py-2 pr-4 text-left font-black tracking-widest">序号</th>
             <th className="py-2 pr-4 text-left font-black tracking-widest">状态</th>
+            <th className="py-2 pr-4 text-left font-black tracking-widest">进度</th>
             <th className="py-2 text-left font-black tracking-widest">耗时</th>
             <th className="py-2 text-left font-black tracking-widest">结果预览</th>
           </tr>
@@ -278,6 +279,19 @@ function NodeRunsPanel({ run, highlightFailedNodes }: { run: WorkflowRun; highli
               <td className="py-3 pr-4 font-black">{node.sequence}</td>
               <td className="py-3 pr-4">
                 <StatusBadge status={node.status} labels={NODE_STATUS_LABELS} styles={NODE_STATUS_STYLES} />
+              </td>
+              <td className="py-3 pr-4">
+                {typeof node.progress_percent === 'number' ? (
+                  <div className="space-y-1">
+                    <p className="font-black tabular-nums">{node.progress_percent}%</p>
+                    <p className="text-[11px] font-bold text-muted-foreground">{node.progress_stage || node.progress_message || '进行中'}</p>
+                    {node.progress_source_path && (
+                      <p className="max-w-[20rem] truncate font-mono text-[10px] text-muted-foreground">{node.progress_source_path}</p>
+                    )}
+                  </div>
+                ) : (
+                  <span className="text-[11px] font-bold text-muted-foreground">未开始</span>
+                )}
               </td>
               <td className="py-3 font-mono font-bold">{formatDuration(node.started_at, node.finished_at)}</td>
               <td className="py-3">

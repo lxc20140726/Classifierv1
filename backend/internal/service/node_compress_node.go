@@ -21,11 +21,15 @@ var defaultCompressNodeIncludePatterns = []string{"*.jpg", "*.jpeg", "*.png", "*
 var compressNodeArchiveDirLocks sync.Map
 
 type compressNodeExecutor struct {
-	fs fs.FSAdapter
+	fs          fs.FSAdapter
+	maxParallel int
 }
 
 func newCompressNodeExecutor(fsAdapter fs.FSAdapter) *compressNodeExecutor {
-	return &compressNodeExecutor{fs: fsAdapter}
+	return &compressNodeExecutor{
+		fs:          fsAdapter,
+		maxParallel: loadCompressMaxParallel(),
+	}
 }
 
 func (e *compressNodeExecutor) Type() string {
@@ -54,7 +58,7 @@ func (e *compressNodeExecutor) Execute(ctx context.Context, input NodeExecutionI
 	}
 
 	scope := strings.ToLower(strings.TrimSpace(stringConfig(input.Node.Config, "scope")))
-	if scope == "" {
+	if scope == "" || scope == "all" {
 		scope = "folder"
 	}
 	if scope != "folder" {
@@ -94,9 +98,15 @@ func (e *compressNodeExecutor) Execute(ctx context.Context, input NodeExecutionI
 		uniqueItems = append(uniqueItems, item)
 	}
 
-	stepResults := make([]ProcessingStepResult, 0, len(uniqueItems))
-	archiveItems := make([]ProcessingItem, 0, len(uniqueItems))
-	archives := make([]string, 0, len(uniqueItems))
+	type compressTask struct {
+		item        ProcessingItem
+		sourcePath  string
+		archiveName string
+		archiveDir  string
+		files       []compressArchiveFile
+	}
+
+	tasks := make([]compressTask, 0, len(uniqueItems))
 	ensuredDirs := map[string]struct{}{}
 	for _, item := range uniqueItems {
 		sourcePath := processingItemCurrentPath(item)
@@ -135,32 +145,138 @@ func (e *compressNodeExecutor) Execute(ctx context.Context, input NodeExecutionI
 			ensuredDirs[archiveDir] = struct{}{}
 		}
 
-		unlock := compressNodeLockArchiveDir(archiveDir)
-		archivePath, err := compressNodeResolveArchivePath(ctx, e.fs, archiveDir, archiveName, ext)
+		files, err := e.collectArchiveFiles(ctx, sourcePath, sourcePath, includePatterns, excludePatterns)
 		if err != nil {
-			unlock()
-			return NodeExecutionOutput{}, fmt.Errorf("%s.Execute: resolve archive name for %q: %w", e.Type(), sourcePath, err)
+			return NodeExecutionOutput{}, fmt.Errorf("%s.Execute: collect archive files for %q: %w", e.Type(), sourcePath, err)
 		}
-
-		if err := e.createArchive(ctx, sourcePath, archivePath, includePatterns, excludePatterns); err != nil {
-			unlock()
-			return NodeExecutionOutput{}, fmt.Errorf("%s.Execute: create archive for %q: %w", e.Type(), sourcePath, err)
+		if len(files) == 0 {
+			return NodeExecutionOutput{}, fmt.Errorf("%s.Execute: no files matched include_patterns in %q", e.Type(), sourcePath)
 		}
-		unlock()
-		archives = append(archives, archivePath)
-		archiveItems = append(archiveItems, compressNodeBuildArchiveItem(item, archivePath))
-		stepResults = append(stepResults, ProcessingStepResult{
-			FolderID:   strings.TrimSpace(item.FolderID),
-			SourcePath: sourcePath,
-			TargetPath: normalizeWorkflowPath(archivePath),
-			NodeType:   input.Node.Type,
-			NodeLabel:  strings.TrimSpace(input.Node.Label),
-			Status:     "succeeded",
+		tasks = append(tasks, compressTask{
+			item:        item,
+			sourcePath:  sourcePath,
+			archiveName: archiveName,
+			archiveDir:  archiveDir,
+			files:       files,
 		})
-		if input.ProgressFn != nil {
-			percent := len(archives) * 100 / len(uniqueItems)
-			input.ProgressFn(percent, fmt.Sprintf("compressed %d/%d items", len(archives), len(uniqueItems)))
+	}
+
+	totalFiles := 0
+	for _, task := range tasks {
+		totalFiles += len(task.files)
+	}
+	if totalFiles <= 0 {
+		return NodeExecutionOutput{}, fmt.Errorf("%s.Execute: no files matched include_patterns", e.Type())
+	}
+
+	if input.ProgressFn != nil {
+		input.ProgressFn(NodeProgressUpdate{
+			Percent: 0,
+			Done:    0,
+			Total:   totalFiles,
+			Stage:   "discovering",
+			Message: fmt.Sprintf("发现 %d 个待打包文件", totalFiles),
+		})
+	}
+
+	stepResults := make([]ProcessingStepResult, 0, len(uniqueItems))
+	archiveItems := make([]ProcessingItem, 0, len(uniqueItems))
+	archives := make([]string, 0, len(uniqueItems))
+	var mu sync.Mutex
+	doneFiles := 0
+
+	workerCount := e.maxParallel
+	if workerCount > len(tasks) {
+		workerCount = len(tasks)
+	}
+	if workerCount <= 0 {
+		workerCount = 1
+	}
+
+	taskCh := make(chan compressTask)
+	errCh := make(chan error, 1)
+	ctxWithCancel, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	for index := 0; index < workerCount; index++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for task := range taskCh {
+				if ctxWithCancel.Err() != nil {
+					return
+				}
+				unlock := compressNodeLockArchiveDir(task.archiveDir)
+				archivePath, err := compressNodeResolveArchivePath(ctxWithCancel, e.fs, task.archiveDir, task.archiveName, ext)
+				if err != nil {
+					unlock()
+					select {
+					case errCh <- fmt.Errorf("%s.Execute: resolve archive name for %q: %w", e.Type(), task.sourcePath, err):
+					default:
+					}
+					cancel()
+					return
+				}
+				err = e.createArchive(ctxWithCancel, task.sourcePath, archivePath, task.files, func(file compressArchiveFile) {
+					mu.Lock()
+					doneFiles++
+					currentDone := doneFiles
+					mu.Unlock()
+					if input.ProgressFn != nil {
+						percent := currentDone * 100 / totalFiles
+						input.ProgressFn(NodeProgressUpdate{
+							Percent:    percent,
+							Done:       currentDone,
+							Total:      totalFiles,
+							Stage:      "writing",
+							Message:    fmt.Sprintf("已打包 %d/%d 个文件", currentDone, totalFiles),
+							SourcePath: normalizeWorkflowPath(filepath.Join(task.sourcePath, file.RelPath)),
+							TargetPath: normalizeWorkflowPath(archivePath),
+						})
+					}
+				})
+				unlock()
+				if err != nil {
+					select {
+					case errCh <- fmt.Errorf("%s.Execute: create archive for %q: %w", e.Type(), task.sourcePath, err):
+					default:
+					}
+					cancel()
+					return
+				}
+
+				mu.Lock()
+				archives = append(archives, archivePath)
+				archiveItems = append(archiveItems, compressNodeBuildArchiveItem(task.item, archivePath))
+				stepResults = append(stepResults, ProcessingStepResult{
+					FolderID:   strings.TrimSpace(task.item.FolderID),
+					SourcePath: task.sourcePath,
+					TargetPath: normalizeWorkflowPath(archivePath),
+					NodeType:   input.Node.Type,
+					NodeLabel:  strings.TrimSpace(input.Node.Label),
+					Status:     "succeeded",
+				})
+				mu.Unlock()
+			}
+		}()
+	}
+
+	go func() {
+		defer close(taskCh)
+		for _, task := range tasks {
+			if ctxWithCancel.Err() != nil {
+				return
+			}
+			taskCh <- task
 		}
+	}()
+
+	wg.Wait()
+	select {
+	case err := <-errCh:
+		return NodeExecutionOutput{}, err
+	default:
 	}
 
 	return NodeExecutionOutput{
@@ -422,7 +538,19 @@ func uniqueCompactStringSlice(values []string) []string {
 	return out
 }
 
-func (e *compressNodeExecutor) createArchive(ctx context.Context, sourceDir, archivePath string, includePatterns, excludePatterns []string) error {
+type compressArchiveFile struct {
+	FullPath string
+	RelPath  string
+}
+
+func (e *compressNodeExecutor) createArchive(
+	ctx context.Context,
+	sourceDir string,
+	archivePath string,
+	files []compressArchiveFile,
+	onFileWritten func(file compressArchiveFile),
+) error {
+	_ = sourceDir
 	fileWriter, err := e.fs.OpenFileWrite(ctx, archivePath, 0o644)
 	if err != nil {
 		return fmt.Errorf("open archive file %q: %w", archivePath, err)
@@ -438,12 +566,33 @@ func (e *compressNodeExecutor) createArchive(ctx context.Context, sourceDir, arc
 		}
 	}()
 
-	written, err := e.walkAndArchive(ctx, sourceDir, sourceDir, archiveWriter, includePatterns, excludePatterns)
-	if err != nil {
-		return err
-	}
-	if written == 0 {
-		return fmt.Errorf("no files matched include_patterns in %q", sourceDir)
+	for _, file := range files {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		reader, err := e.fs.OpenFileRead(ctx, file.FullPath)
+		if err != nil {
+			return fmt.Errorf("open source file %q: %w", file.FullPath, err)
+		}
+		header := &zip.FileHeader{
+			Name:   file.RelPath,
+			Method: zip.Store,
+		}
+		writer, err := archiveWriter.CreateHeader(header)
+		if err != nil {
+			_ = reader.Close()
+			return fmt.Errorf("create archive entry %q: %w", file.RelPath, err)
+		}
+		if _, err := io.Copy(writer, reader); err != nil {
+			_ = reader.Close()
+			return fmt.Errorf("copy file %q to archive: %w", file.FullPath, err)
+		}
+		if err := reader.Close(); err != nil {
+			return fmt.Errorf("close source file %q: %w", file.FullPath, err)
+		}
+		if onFileWritten != nil {
+			onFileWritten(file)
+		}
 	}
 	if err := archiveWriter.Close(); err != nil {
 		return fmt.Errorf("close archive writer %q: %w", archivePath, err)
@@ -456,29 +605,28 @@ func (e *compressNodeExecutor) createArchive(ctx context.Context, sourceDir, arc
 	return nil
 }
 
-func (e *compressNodeExecutor) walkAndArchive(
+func (e *compressNodeExecutor) collectArchiveFiles(
 	ctx context.Context,
 	rootDir string,
 	currentDir string,
-	archiveWriter *zip.Writer,
 	includePatterns []string,
 	excludePatterns []string,
-) (int, error) {
+) ([]compressArchiveFile, error) {
 	entries, err := e.fs.ReadDir(ctx, currentDir)
 	if err != nil {
-		return 0, fmt.Errorf("read directory %q: %w", currentDir, err)
+		return nil, fmt.Errorf("read directory %q: %w", currentDir, err)
 	}
 
-	written := 0
+	files := make([]compressArchiveFile, 0, len(entries))
 	for _, entry := range entries {
 		if err := ctx.Err(); err != nil {
-			return written, err
+			return nil, err
 		}
 
 		fullPath := filepath.Join(currentDir, entry.Name)
 		relPath, err := filepath.Rel(rootDir, fullPath)
 		if err != nil {
-			return written, fmt.Errorf("build relative path for %q from %q: %w", fullPath, rootDir, err)
+			return nil, fmt.Errorf("build relative path for %q from %q: %w", fullPath, rootDir, err)
 		}
 		relPath = filepath.ToSlash(relPath)
 
@@ -486,40 +634,24 @@ func (e *compressNodeExecutor) walkAndArchive(
 			if compressNodeShouldExclude(relPath, excludePatterns) {
 				continue
 			}
-			childWritten, err := e.walkAndArchive(ctx, rootDir, fullPath, archiveWriter, includePatterns, excludePatterns)
+			childFiles, err := e.collectArchiveFiles(ctx, rootDir, fullPath, includePatterns, excludePatterns)
 			if err != nil {
-				return written, err
+				return nil, err
 			}
-			written += childWritten
+			files = append(files, childFiles...)
 			continue
 		}
 
 		if !compressNodeShouldInclude(relPath, includePatterns) || compressNodeShouldExclude(relPath, excludePatterns) {
 			continue
 		}
-
-		reader, err := e.fs.OpenFileRead(ctx, fullPath)
-		if err != nil {
-			return written, fmt.Errorf("open source file %q: %w", fullPath, err)
-		}
-
-		writer, err := archiveWriter.Create(relPath)
-		if err != nil {
-			reader.Close()
-			return written, fmt.Errorf("create archive entry %q: %w", relPath, err)
-		}
-
-		if _, err := io.Copy(writer, reader); err != nil {
-			reader.Close()
-			return written, fmt.Errorf("copy file %q to archive: %w", fullPath, err)
-		}
-		if err := reader.Close(); err != nil {
-			return written, fmt.Errorf("close source file %q: %w", fullPath, err)
-		}
-		written++
+		files = append(files, compressArchiveFile{
+			FullPath: fullPath,
+			RelPath:  relPath,
+		})
 	}
 
-	return written, nil
+	return files, nil
 }
 
 func compressNodeResolveArchivePath(ctx context.Context, fsAdapter fs.FSAdapter, targetDir, baseName, extension string) (string, error) {

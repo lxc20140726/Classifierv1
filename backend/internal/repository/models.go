@@ -264,21 +264,39 @@ type WorkflowRun struct {
 }
 
 type NodeRun struct {
-	ID             string     `db:"id"              json:"id"`
-	WorkflowRunID  string     `db:"workflow_run_id" json:"workflow_run_id"`
-	NodeID         string     `db:"node_id"         json:"node_id"`
-	NodeType       string     `db:"node_type"       json:"node_type"`
-	Sequence       int        `db:"sequence"        json:"sequence"`
-	Status         string     `db:"status"          json:"status"`
-	InputJSON      string     `db:"input_json"      json:"input_json"`
-	OutputJSON     string     `db:"output_json"     json:"output_json"`
-	InputSignature string     `db:"input_signature" json:"input_signature"`
-	ResumeToken    string     `db:"resume_token"    json:"resume_token"`
-	ResumeData     string     `db:"resume_data"     json:"resume_data"`
-	Error          string     `db:"error"           json:"error"`
-	StartedAt      *time.Time `db:"started_at"      json:"started_at"`
-	FinishedAt     *time.Time `db:"finished_at"     json:"finished_at"`
-	CreatedAt      time.Time  `db:"created_at"      json:"created_at"`
+	ID                 string     `db:"id"              json:"id"`
+	WorkflowRunID      string     `db:"workflow_run_id" json:"workflow_run_id"`
+	NodeID             string     `db:"node_id"         json:"node_id"`
+	NodeType           string     `db:"node_type"       json:"node_type"`
+	Sequence           int        `db:"sequence"        json:"sequence"`
+	Status             string     `db:"status"          json:"status"`
+	InputJSON          string     `db:"input_json"      json:"input_json"`
+	OutputJSON         string     `db:"output_json"     json:"output_json"`
+	InputSignature     string     `db:"input_signature" json:"input_signature"`
+	ResumeToken        string     `db:"resume_token"    json:"resume_token"`
+	ResumeData         string     `db:"resume_data"     json:"resume_data"`
+	Error              string     `db:"error"           json:"error"`
+	ProgressPercent    *int       `db:"progress_percent"     json:"progress_percent,omitempty"`
+	ProgressDone       *int       `db:"progress_done"        json:"progress_done,omitempty"`
+	ProgressTotal      *int       `db:"progress_total"       json:"progress_total,omitempty"`
+	ProgressStage      *string    `db:"progress_stage"       json:"progress_stage,omitempty"`
+	ProgressMessage    *string    `db:"progress_message"     json:"progress_message,omitempty"`
+	ProgressSourcePath *string    `db:"progress_source_path" json:"progress_source_path,omitempty"`
+	ProgressTargetPath *string    `db:"progress_target_path" json:"progress_target_path,omitempty"`
+	ProgressUpdatedAt  *time.Time `db:"progress_updated_at"  json:"progress_updated_at,omitempty"`
+	StartedAt          *time.Time `db:"started_at"      json:"started_at"`
+	FinishedAt         *time.Time `db:"finished_at"     json:"finished_at"`
+	CreatedAt          time.Time  `db:"created_at"      json:"created_at"`
+}
+
+type NodeRunProgress struct {
+	Percent    int
+	Done       int
+	Total      int
+	Stage      string
+	Message    string
+	SourcePath string
+	TargetPath string
 }
 
 type NodeSnapshot struct {

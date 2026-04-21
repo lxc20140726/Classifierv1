@@ -10,7 +10,7 @@ func TestNodeRunRepository_CRUDFilterAndTransitions(t *testing.T) {
 	t.Parallel()
 
 	database := newTestDB(t)
-	repo := NewNodeRunRepository(database)
+	repo := NewNodeRunRepository(database).(*SQLiteNodeRunRepository)
 	ctx := context.Background()
 
 	items := []*NodeRun{
@@ -72,6 +72,17 @@ func TestNodeRunRepository_CRUDFilterAndTransitions(t *testing.T) {
 	if err := repo.UpdateFinish(ctx, "nr-1", "succeeded", `{"ok":true}`, ""); err != nil {
 		t.Fatalf("UpdateFinish() error = %v", err)
 	}
+	if err := repo.UpdateProgress(ctx, "nr-1", NodeRunProgress{
+		Percent:    45,
+		Done:       9,
+		Total:      20,
+		Stage:      "writing",
+		Message:    "已写入 9/20",
+		SourcePath: "/source/a.jpg",
+		TargetPath: "/target/a.cbz",
+	}); err != nil {
+		t.Fatalf("UpdateProgress() error = %v", err)
+	}
 	updated, err := repo.GetByID(ctx, "nr-1")
 	if err != nil {
 		t.Fatalf("GetByID(nr-1) error = %v", err)
@@ -82,13 +93,28 @@ func TestNodeRunRepository_CRUDFilterAndTransitions(t *testing.T) {
 	if updated.StartedAt == nil || updated.FinishedAt == nil {
 		t.Fatalf("started_at/finished_at = %#v/%#v, want non-nil", updated.StartedAt, updated.FinishedAt)
 	}
+	if updated.ProgressPercent == nil || *updated.ProgressPercent != 45 {
+		t.Fatalf("progress_percent = %#v, want 45", updated.ProgressPercent)
+	}
+	if updated.ProgressDone == nil || *updated.ProgressDone != 9 {
+		t.Fatalf("progress_done = %#v, want 9", updated.ProgressDone)
+	}
+	if updated.ProgressTotal == nil || *updated.ProgressTotal != 20 {
+		t.Fatalf("progress_total = %#v, want 20", updated.ProgressTotal)
+	}
+	if updated.ProgressStage == nil || *updated.ProgressStage != "writing" {
+		t.Fatalf("progress_stage = %#v, want writing", updated.ProgressStage)
+	}
+	if updated.ProgressUpdatedAt == nil {
+		t.Fatalf("progress_updated_at = nil, want non-nil")
+	}
 }
 
 func TestNodeRunRepository_NotFoundBranches(t *testing.T) {
 	t.Parallel()
 
 	database := newTestDB(t)
-	repo := NewNodeRunRepository(database)
+	repo := NewNodeRunRepository(database).(*SQLiteNodeRunRepository)
 	ctx := context.Background()
 
 	_, err := repo.GetByID(ctx, "missing")
@@ -114,5 +140,8 @@ func TestNodeRunRepository_NotFoundBranches(t *testing.T) {
 	}
 	if err := repo.SetResumeToken(ctx, "missing", "token"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("SetResumeToken(missing) error = %v, want ErrNotFound", err)
+	}
+	if err := repo.UpdateProgress(ctx, "missing", NodeRunProgress{Percent: 1, Done: 1, Total: 1}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("UpdateProgress(missing) error = %v, want ErrNotFound", err)
 	}
 }

@@ -19,8 +19,10 @@ func (r *SQLiteNodeRunRepository) Create(ctx context.Context, item *NodeRun) err
 	_, err := r.db.ExecContext(
 		ctx,
 		`INSERT INTO node_runs (
-	id, workflow_run_id, node_id, node_type, sequence, status, input_json, output_json, input_signature, resume_token, resume_data, error, started_at, finished_at, created_at
- ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+	id, workflow_run_id, node_id, node_type, sequence, status, input_json, output_json, input_signature, resume_token, resume_data, error,
+	progress_percent, progress_done, progress_total, progress_stage, progress_message, progress_source_path, progress_target_path, progress_updated_at,
+	started_at, finished_at, created_at
+ ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
 		item.ID,
 		item.WorkflowRunID,
 		item.NodeID,
@@ -33,6 +35,14 @@ func (r *SQLiteNodeRunRepository) Create(ctx context.Context, item *NodeRun) err
 		nullableString(item.ResumeToken),
 		item.ResumeData,
 		nullableString(item.Error),
+		item.ProgressPercent,
+		item.ProgressDone,
+		item.ProgressTotal,
+		nullableString(ptrString(item.ProgressStage)),
+		nullableString(ptrString(item.ProgressMessage)),
+		nullableString(ptrString(item.ProgressSourcePath)),
+		nullableString(ptrString(item.ProgressTargetPath)),
+		nullableTime(item.ProgressUpdatedAt),
 		nullableTime(item.StartedAt),
 		nullableTime(item.FinishedAt),
 	)
@@ -45,7 +55,9 @@ func (r *SQLiteNodeRunRepository) Create(ctx context.Context, item *NodeRun) err
 
 func (r *SQLiteNodeRunRepository) GetByID(ctx context.Context, id string) (*NodeRun, error) {
 	item, err := scanNodeRun(r.db.QueryRowContext(ctx, `
-SELECT id, workflow_run_id, node_id, node_type, sequence, status, input_json, output_json, input_signature, resume_token, resume_data, error, started_at, finished_at, created_at
+SELECT id, workflow_run_id, node_id, node_type, sequence, status, input_json, output_json, input_signature, resume_token, resume_data, error,
+       progress_percent, progress_done, progress_total, progress_stage, progress_message, progress_source_path, progress_target_path, progress_updated_at,
+       started_at, finished_at, created_at
 FROM node_runs
 WHERE id = ?`, id))
 	if err != nil {
@@ -80,7 +92,9 @@ func (r *SQLiteNodeRunRepository) List(ctx context.Context, filter NodeRunListFi
 	offset := (page - 1) * limit
 
 	rows, err := r.db.QueryContext(ctx, `
-SELECT id, workflow_run_id, node_id, node_type, sequence, status, input_json, output_json, input_signature, resume_token, resume_data, error, started_at, finished_at, created_at
+SELECT id, workflow_run_id, node_id, node_type, sequence, status, input_json, output_json, input_signature, resume_token, resume_data, error,
+       progress_percent, progress_done, progress_total, progress_stage, progress_message, progress_source_path, progress_target_path, progress_updated_at,
+       started_at, finished_at, created_at
 FROM node_runs
 WHERE workflow_run_id = ?
 ORDER BY sequence ASC, created_at ASC
@@ -107,7 +121,9 @@ LIMIT ? OFFSET ?`, filter.WorkflowRunID, limit, offset)
 
 func (r *SQLiteNodeRunRepository) GetLatestByNodeID(ctx context.Context, workflowRunID, nodeID string) (*NodeRun, error) {
 	item, err := scanNodeRun(r.db.QueryRowContext(ctx, `
-SELECT id, workflow_run_id, node_id, node_type, sequence, status, input_json, output_json, input_signature, resume_token, resume_data, error, started_at, finished_at, created_at
+SELECT id, workflow_run_id, node_id, node_type, sequence, status, input_json, output_json, input_signature, resume_token, resume_data, error,
+       progress_percent, progress_done, progress_total, progress_stage, progress_message, progress_source_path, progress_target_path, progress_updated_at,
+       started_at, finished_at, created_at
 FROM node_runs
 WHERE workflow_run_id = ? AND node_id = ?
 ORDER BY sequence DESC, created_at DESC
@@ -123,7 +139,9 @@ func (r *SQLiteNodeRunRepository) UpdateStart(ctx context.Context, id, inputJSON
 	res, err := r.db.ExecContext(
 		ctx,
 		`UPDATE node_runs
-SET status = 'running', input_json = ?, started_at = COALESCE(started_at, CURRENT_TIMESTAMP)
+SET status = 'running', input_json = ?, started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
+    progress_percent = NULL, progress_done = NULL, progress_total = NULL, progress_stage = NULL, progress_message = NULL,
+    progress_source_path = NULL, progress_target_path = NULL, progress_updated_at = NULL
 WHERE id = ?`,
 		nullableString(inputJSON),
 		id,
@@ -134,6 +152,33 @@ WHERE id = ?`,
 
 	if err := assertRowsAffected(res); err != nil {
 		return fmt.Errorf("nodeRunRepo.UpdateStart: %w", err)
+	}
+
+	return nil
+}
+
+func (r *SQLiteNodeRunRepository) UpdateProgress(ctx context.Context, id string, progress NodeRunProgress) error {
+	res, err := r.db.ExecContext(
+		ctx,
+		`UPDATE node_runs
+SET progress_percent = ?, progress_done = ?, progress_total = ?, progress_stage = ?, progress_message = ?,
+    progress_source_path = ?, progress_target_path = ?, progress_updated_at = CURRENT_TIMESTAMP
+WHERE id = ?`,
+		progress.Percent,
+		progress.Done,
+		progress.Total,
+		nullableString(progress.Stage),
+		nullableString(progress.Message),
+		nullableString(progress.SourcePath),
+		nullableString(progress.TargetPath),
+		id,
+	)
+	if err != nil {
+		return fmt.Errorf("nodeRunRepo.UpdateProgress: %w", err)
+	}
+
+	if err := assertRowsAffected(res); err != nil {
+		return fmt.Errorf("nodeRunRepo.UpdateProgress: %w", err)
 	}
 
 	return nil
@@ -183,7 +228,9 @@ WHERE id = ?`,
 
 func (r *SQLiteNodeRunRepository) GetWaitingInputByWorkflowRunID(ctx context.Context, workflowRunID string) (*NodeRun, error) {
 	item, err := scanNodeRun(r.db.QueryRowContext(ctx, `
-SELECT id, workflow_run_id, node_id, node_type, sequence, status, input_json, output_json, input_signature, resume_token, resume_data, error, started_at, finished_at, created_at
+SELECT id, workflow_run_id, node_id, node_type, sequence, status, input_json, output_json, input_signature, resume_token, resume_data, error,
+       progress_percent, progress_done, progress_total, progress_stage, progress_message, progress_source_path, progress_target_path, progress_updated_at,
+       started_at, finished_at, created_at
 FROM node_runs
 WHERE workflow_run_id = ? AND status = 'waiting_input'
 ORDER BY sequence DESC, created_at DESC
@@ -223,6 +270,14 @@ func scanNodeRun(scanner interface{ Scan(dest ...any) error }) (*NodeRun, error)
 	var resumeToken sql.NullString
 	var resumeData sql.NullString
 	var errMsg sql.NullString
+	var progressPercent sql.NullInt64
+	var progressDone sql.NullInt64
+	var progressTotal sql.NullInt64
+	var progressStage sql.NullString
+	var progressMessage sql.NullString
+	var progressSourcePath sql.NullString
+	var progressTargetPath sql.NullString
+	var progressUpdatedAt any
 	var startedAt any
 	var finishedAt any
 	var createdAt any
@@ -240,6 +295,14 @@ func scanNodeRun(scanner interface{ Scan(dest ...any) error }) (*NodeRun, error)
 		&resumeToken,
 		&resumeData,
 		&errMsg,
+		&progressPercent,
+		&progressDone,
+		&progressTotal,
+		&progressStage,
+		&progressMessage,
+		&progressSourcePath,
+		&progressTargetPath,
+		&progressUpdatedAt,
 		&startedAt,
 		&finishedAt,
 		&createdAt,
@@ -269,6 +332,38 @@ func scanNodeRun(scanner interface{ Scan(dest ...any) error }) (*NodeRun, error)
 	if errMsg.Valid {
 		item.Error = errMsg.String
 	}
+	if progressPercent.Valid {
+		value := int(progressPercent.Int64)
+		item.ProgressPercent = &value
+	}
+	if progressDone.Valid {
+		value := int(progressDone.Int64)
+		item.ProgressDone = &value
+	}
+	if progressTotal.Valid {
+		value := int(progressTotal.Int64)
+		item.ProgressTotal = &value
+	}
+	if progressStage.Valid {
+		value := progressStage.String
+		item.ProgressStage = &value
+	}
+	if progressMessage.Valid {
+		value := progressMessage.String
+		item.ProgressMessage = &value
+	}
+	if progressSourcePath.Valid {
+		value := progressSourcePath.String
+		item.ProgressSourcePath = &value
+	}
+	if progressTargetPath.Valid {
+		value := progressTargetPath.String
+		item.ProgressTargetPath = &value
+	}
+	item.ProgressUpdatedAt, err = parseNullableTime(progressUpdatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("scanNodeRun parse progress_updated_at: %w", err)
+	}
 	item.StartedAt, err = parseNullableTime(startedAt)
 	if err != nil {
 		return nil, fmt.Errorf("scanNodeRun parse started_at: %w", err)
@@ -283,4 +378,11 @@ func scanNodeRun(scanner interface{ Scan(dest ...any) error }) (*NodeRun, error)
 	}
 
 	return item, nil
+}
+
+func ptrString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }

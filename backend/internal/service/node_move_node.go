@@ -145,7 +145,13 @@ func (e *phase4MoveNodeExecutor) Execute(ctx context.Context, input NodeExecutio
 
 		if input.ProgressFn != nil {
 			percent := (index + 1) * 100 / len(normalizedItems)
-			input.ProgressFn(percent, fmt.Sprintf("已完成 %d/%d 项归并", index+1, len(normalizedItems)))
+			input.ProgressFn(NodeProgressUpdate{
+				Percent: percent,
+				Done:    index + 1,
+				Total:   len(normalizedItems),
+				Stage:   "moving",
+				Message: fmt.Sprintf("已完成 %d/%d 项归并", index+1, len(normalizedItems)),
+			})
 		}
 	}
 
@@ -408,7 +414,13 @@ func (e *phase4MoveNodeExecutor) executeLegacyMove(
 
 		if input.ProgressFn != nil {
 			percent := (index + 1) * 100 / len(items)
-			input.ProgressFn(percent, fmt.Sprintf("已完成 %d/%d 项移动", index+1, len(items)))
+			input.ProgressFn(NodeProgressUpdate{
+				Percent: percent,
+				Done:    index + 1,
+				Total:   len(items),
+				Stage:   "moving",
+				Message: fmt.Sprintf("已完成 %d/%d 项移动", index+1, len(items)),
+			})
 		}
 	}
 

@@ -44,7 +44,17 @@ type NodeExecutionInput struct {
 	SourceDir   string
 	AppConfig   *repository.AppConfig
 	Inputs      map[string]*TypedValue
-	ProgressFn  func(percent int, msg string)
+	ProgressFn  func(update NodeProgressUpdate)
+}
+
+type NodeProgressUpdate struct {
+	Percent    int    `json:"percent"`
+	Done       int    `json:"done"`
+	Total      int    `json:"total"`
+	Stage      string `json:"stage"`
+	Message    string `json:"message"`
+	SourcePath string `json:"source_path"`
+	TargetPath string `json:"target_path"`
 }
 
 type ExecutionStatus string
@@ -262,6 +272,16 @@ func (s *WorkflowRunnerService) RegisterExecutor(executor WorkflowNodeExecutor) 
 	}
 
 	s.executors[executor.Type()] = executor
+}
+
+func (s *WorkflowRunnerService) updateNodeRunProgress(ctx context.Context, nodeRunID string, progress repository.NodeRunProgress) {
+	repo, ok := s.nodeRuns.(interface {
+		UpdateProgress(ctx context.Context, id string, progress repository.NodeRunProgress) error
+	})
+	if !ok {
+		return
+	}
+	_ = repo.UpdateProgress(ctx, nodeRunID, progress)
 }
 
 func (s *WorkflowRunnerService) ListNodeSchemas() []NodeSchema {
@@ -731,6 +751,53 @@ type nodeExecutionResult struct {
 	Reason  string
 }
 
+const workflowNodeProgressMinInterval = 1200 * time.Millisecond
+
+type nodeProgressReporter struct {
+	lastPercent int
+	lastEmitAt  time.Time
+	emittedOnce bool
+}
+
+func normalizeNodeProgressUpdate(update NodeProgressUpdate) NodeProgressUpdate {
+	if update.Percent < 0 {
+		update.Percent = 0
+	}
+	if update.Percent > 100 {
+		update.Percent = 100
+	}
+	if update.Done < 0 {
+		update.Done = 0
+	}
+	if update.Total < 0 {
+		update.Total = 0
+	}
+	update.Stage = strings.TrimSpace(update.Stage)
+	update.Message = strings.TrimSpace(update.Message)
+	update.SourcePath = strings.TrimSpace(update.SourcePath)
+	update.TargetPath = strings.TrimSpace(update.TargetPath)
+	if update.Total > 0 && update.Done > update.Total {
+		update.Done = update.Total
+	}
+	return update
+}
+
+func (r *nodeProgressReporter) shouldEmit(percent int) bool {
+	if !r.emittedOnce {
+		return true
+	}
+	if percent != r.lastPercent {
+		return true
+	}
+	return time.Since(r.lastEmitAt) >= workflowNodeProgressMinInterval
+}
+
+func (r *nodeProgressReporter) markEmitted(percent int) {
+	r.emittedOnce = true
+	r.lastPercent = percent
+	r.lastEmitAt = time.Now()
+}
+
 func (s *WorkflowRunnerService) executeWorkflowNode(
 	ctx context.Context,
 	run *repository.WorkflowRun,
@@ -776,6 +843,13 @@ func (s *WorkflowRunnerService) executeWorkflowNode(
 		if strings.TrimSpace(skipReason) != "" {
 			skipMessage = "skip_reason=" + strings.TrimSpace(skipReason)
 		}
+		s.updateNodeRunProgress(ctx, nodeRun.ID, repository.NodeRunProgress{
+			Percent: 100,
+			Done:    1,
+			Total:   1,
+			Stage:   "completed",
+			Message: "节点已跳过",
+		})
 		if err := s.nodeRuns.UpdateFinish(ctx, nodeRun.ID, "skipped", "{}", skipMessage); err != nil {
 			reason := fmt.Sprintf("finish skipped node run %q: %v", node.ID, err)
 			_ = s.markWorkflowRunFailed(ctx, run.ID, node.ID, reason)
@@ -902,6 +976,43 @@ func (s *WorkflowRunnerService) executeWorkflowNode(
 		return nodeExecutionResult{Err: err, NodeID: node.ID, Reason: err.Error()}
 	}
 
+	progressReporter := &nodeProgressReporter{}
+	publishProgress := func(update NodeProgressUpdate, force bool) {
+		normalized := normalizeNodeProgressUpdate(update)
+		if !force {
+			if !progressReporter.shouldEmit(normalized.Percent) {
+				return
+			}
+		}
+		progressReporter.markEmitted(normalized.Percent)
+
+		s.updateNodeRunProgress(ctx, nodeRun.ID, repository.NodeRunProgress{
+			Percent:    normalized.Percent,
+			Done:       normalized.Done,
+			Total:      normalized.Total,
+			Stage:      normalized.Stage,
+			Message:    normalized.Message,
+			SourcePath: normalized.SourcePath,
+			TargetPath: normalized.TargetPath,
+		})
+		s.publish("workflow_run.node_progress", map[string]any{
+			"job_id":              run.JobID,
+			"workflow_run_id":     run.ID,
+			"folder_id":           run.FolderID,
+			"node_run_id":         nodeRun.ID,
+			"node_id":             node.ID,
+			"node_type":           node.Type,
+			"percent":             normalized.Percent,
+			"done":                normalized.Done,
+			"total":               normalized.Total,
+			"stage":               normalized.Stage,
+			"message":             normalized.Message,
+			"source_path":         normalized.SourcePath,
+			"target_path":         normalized.TargetPath,
+			"progress_updated_at": time.Now().UTC().Format(time.RFC3339Nano),
+		})
+	}
+
 	execInput := NodeExecutionInput{
 		WorkflowRun: run,
 		NodeRun:     nodeRun,
@@ -910,17 +1021,8 @@ func (s *WorkflowRunnerService) executeWorkflowNode(
 		SourceDir:   run.SourceDir,
 		AppConfig:   appConfig,
 		Inputs:      inputs,
-		ProgressFn: func(percent int, msg string) {
-			s.publish("workflow_run.node_progress", map[string]any{
-				"job_id":          run.JobID,
-				"workflow_run_id": run.ID,
-				"folder_id":       run.FolderID,
-				"node_run_id":     nodeRun.ID,
-				"node_id":         node.ID,
-				"node_type":       node.Type,
-				"percent":         percent,
-				"message":         msg,
-			})
+		ProgressFn: func(update NodeProgressUpdate) {
+			publishProgress(update, false)
 		},
 	}
 
@@ -1068,6 +1170,14 @@ func (s *WorkflowRunnerService) executeWorkflowNode(
 			Reason: errMsg,
 		}
 	}
+
+	publishProgress(NodeProgressUpdate{
+		Percent: 100,
+		Done:    1,
+		Total:   1,
+		Stage:   "completed",
+		Message: "节点执行完成",
+	}, true)
 
 	if err := s.nodeRuns.UpdateFinish(ctx, nodeRun.ID, "succeeded", string(outputJSON), ""); err != nil {
 		reason := fmt.Sprintf("update finish for node run %q: %v", nodeRun.ID, err)

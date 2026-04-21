@@ -125,6 +125,11 @@ export function useSSE() {
         useLiveClassificationStore.getState().handleWorkflowNodeEvent(payload, 'failed')
       })
 
+      eventSource.addEventListener('workflow_run.node_progress', (event) => {
+        const payload = JSON.parse(event.data) as WorkflowNodeEvent
+        useWorkflowRunStore.getState().handleNodeProgress(payload)
+      })
+
       eventSource.addEventListener('workflow_run.node_pending', (event) => {
         const payload = JSON.parse(event.data) as WorkflowNodeEvent
         useWorkflowRunStore.getState().handleNodeEvent({ ...payload, status: 'waiting_input' })

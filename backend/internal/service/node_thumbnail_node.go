@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/liqiye/classifier/internal/fs"
 	"github.com/liqiye/classifier/internal/repository"
@@ -28,17 +29,22 @@ var thumbnailVideoExtensions = map[string]struct{}{
 }
 
 type thumbnailNodeExecutor struct {
-	fs        fs.FSAdapter
-	folders   repository.FolderRepository
-	lookPath  func(string) (string, error)
-	runFFmpeg func(ctx context.Context, command string, args ...string) ([]byte, error)
+	fs          fs.FSAdapter
+	folders     repository.FolderRepository
+	lookPath    func(string) (string, error)
+	runFFmpeg   func(ctx context.Context, command string, args ...string) ([]byte, error)
+	maxParallel int
+	sem         chan struct{}
 }
 
 func newThumbnailNodeExecutor(fsAdapter fs.FSAdapter, folderRepo repository.FolderRepository) *thumbnailNodeExecutor {
+	maxParallel := loadThumbnailMaxParallel()
 	return &thumbnailNodeExecutor{
-		fs:       fsAdapter,
-		folders:  folderRepo,
-		lookPath: exec.LookPath,
+		fs:          fsAdapter,
+		folders:     folderRepo,
+		lookPath:    exec.LookPath,
+		maxParallel: maxParallel,
+		sem:         make(chan struct{}, maxParallel),
 		runFFmpeg: func(ctx context.Context, command string, args ...string) ([]byte, error) {
 			cmd := exec.CommandContext(ctx, command, args...)
 			return cmd.CombinedOutput()
@@ -86,8 +92,16 @@ func (e *thumbnailNodeExecutor) Execute(ctx context.Context, input NodeExecution
 	}
 	width := intConfig(input.Node.Config, "width", 640)
 
-	stepResults := make([]ProcessingStepResult, 0, len(items))
+	type thumbnailTask struct {
+		item             ProcessingItem
+		videoSource      thumbnailVideoSource
+		thumbnailPath    string
+		isRepresentative bool
+	}
+
+	tasks := make([]thumbnailTask, 0, len(items))
 	ensuredDirs := map[string]struct{}{}
+	seenVideoPaths := map[string]struct{}{}
 	for _, item := range items {
 		item = processingItemNormalize(item)
 		currentPath := processingItemCurrentPath(item)
@@ -99,8 +113,6 @@ func (e *thumbnailNodeExecutor) Execute(ctx context.Context, input NodeExecution
 		if err != nil {
 			return NodeExecutionOutput{}, fmt.Errorf("%s.Execute: %w", e.Type(), err)
 		}
-		outputNames := thumbnailNodeBuildOutputNames(videoSources)
-
 		outputDir := configuredOutputDir
 		if outputDir == "" {
 			outputDir = normalizeWorkflowPath(thumbnailNodeDefaultOutputDir(item))
@@ -123,38 +135,89 @@ func (e *thumbnailNodeExecutor) Execute(ctx context.Context, input NodeExecution
 			}
 			ensuredDirs[outputDir] = struct{}{}
 		}
-
-		coverThumbnailPath := ""
+		outputNames := thumbnailNodeBuildOutputNames(videoSources)
 		for _, videoSource := range videoSources {
+			normalizedVideoPath := normalizeWorkflowPath(videoSource.Path)
+			if _, exists := seenVideoPaths[normalizedVideoPath]; exists {
+				continue
+			}
+			seenVideoPaths[normalizedVideoPath] = struct{}{}
 			outputName := strings.TrimSpace(outputNames[videoSource.Path])
 			if outputName == "" {
 				outputName = strings.TrimSuffix(filepath.Base(videoSource.Path), filepath.Ext(videoSource.Path))
 			}
 			thumbnailPath := joinWorkflowPath(outputDir, outputName+".jpg")
-
-			args := thumbnailNodeBuildArgs(videoSource.Path, thumbnailPath, offsetSeconds, width)
-			combined, err := e.runFFmpeg(ctx, ffmpegPath, args...)
-			if err != nil {
-				return NodeExecutionOutput{}, fmt.Errorf("%s.Execute: ffmpeg failed for %q -> %q: %w: %s", e.Type(), videoSource.Path, thumbnailPath, err, strings.TrimSpace(string(combined)))
-			}
-
-			if normalizeWorkflowPath(videoSource.Path) == normalizeWorkflowPath(representativeVideoPath) {
-				coverThumbnailPath = thumbnailPath
-			}
-
-			stepResults = append(stepResults, ProcessingStepResult{
-				FolderID:   strings.TrimSpace(item.FolderID),
-				SourcePath: normalizeWorkflowPath(videoSource.Path),
-				TargetPath: normalizeWorkflowPath(thumbnailPath),
-				NodeType:   input.Node.Type,
-				NodeLabel:  strings.TrimSpace(input.Node.Label),
-				Status:     "succeeded",
+			tasks = append(tasks, thumbnailTask{
+				item:             item,
+				videoSource:      videoSource,
+				thumbnailPath:    thumbnailPath,
+				isRepresentative: normalizeWorkflowPath(videoSource.Path) == normalizeWorkflowPath(representativeVideoPath),
 			})
 		}
+	}
+	if len(tasks) == 0 {
+		return NodeExecutionOutput{}, fmt.Errorf("%s.Execute: no video files matched current items", e.Type())
+	}
 
-		if e.folders != nil && strings.TrimSpace(item.FolderID) != "" && strings.TrimSpace(coverThumbnailPath) != "" {
-			if err := e.folders.UpdateCoverImagePath(ctx, item.FolderID, coverThumbnailPath); err != nil {
-				return NodeExecutionOutput{}, fmt.Errorf("%s.Execute: update cover image path for %q: %w", e.Type(), item.FolderID, err)
+	stepResults := make([]ProcessingStepResult, 0, len(tasks))
+	coverByFolderID := map[string]string{}
+	var stepMu sync.Mutex
+	var firstErr error
+	done := 0
+	total := len(tasks)
+
+	for _, task := range tasks {
+		if err := ctx.Err(); err != nil {
+			return NodeExecutionOutput{}, fmt.Errorf("%s.Execute: %w", e.Type(), err)
+		}
+		if err := e.acquireFFmpegSlot(ctx); err != nil {
+			return NodeExecutionOutput{}, fmt.Errorf("%s.Execute: acquire ffmpeg slot: %w", e.Type(), err)
+		}
+
+		args := thumbnailNodeBuildArgs(task.videoSource.Path, task.thumbnailPath, offsetSeconds, width)
+		combined, err := e.runFFmpeg(ctx, ffmpegPath, args...)
+		e.releaseFFmpegSlot()
+		if err != nil {
+			firstErr = fmt.Errorf("%s.Execute: ffmpeg failed for %q -> %q: %w: %s", e.Type(), task.videoSource.Path, task.thumbnailPath, err, strings.TrimSpace(string(combined)))
+			break
+		}
+
+		stepMu.Lock()
+		done++
+		stepResults = append(stepResults, ProcessingStepResult{
+			FolderID:   strings.TrimSpace(task.item.FolderID),
+			SourcePath: normalizeWorkflowPath(task.videoSource.Path),
+			TargetPath: normalizeWorkflowPath(task.thumbnailPath),
+			NodeType:   input.Node.Type,
+			NodeLabel:  strings.TrimSpace(input.Node.Label),
+			Status:     "succeeded",
+		})
+		if task.isRepresentative && strings.TrimSpace(task.item.FolderID) != "" {
+			coverByFolderID[strings.TrimSpace(task.item.FolderID)] = normalizeWorkflowPath(task.thumbnailPath)
+		}
+		stepMu.Unlock()
+
+		if input.ProgressFn != nil {
+			percent := done * 100 / total
+			input.ProgressFn(NodeProgressUpdate{
+				Percent:    percent,
+				Done:       done,
+				Total:      total,
+				Stage:      "generating_thumbnails",
+				Message:    fmt.Sprintf("已生成 %d/%d 张缩略图", done, total),
+				SourcePath: normalizeWorkflowPath(task.videoSource.Path),
+				TargetPath: normalizeWorkflowPath(task.thumbnailPath),
+			})
+		}
+	}
+	if firstErr != nil {
+		return NodeExecutionOutput{}, firstErr
+	}
+
+	if e.folders != nil {
+		for folderID, coverThumbnailPath := range coverByFolderID {
+			if err := e.folders.UpdateCoverImagePath(ctx, folderID, coverThumbnailPath); err != nil {
+				return NodeExecutionOutput{}, fmt.Errorf("%s.Execute: update cover image path for %q: %w", e.Type(), folderID, err)
 			}
 		}
 	}
@@ -679,6 +742,10 @@ func thumbnailNodeResolveFolderIDForStep(items []ProcessingItem, step Processing
 
 func thumbnailNodeBuildArgs(videoPath, outputPath string, offsetSeconds, width int) []string {
 	args := []string{
+		"-nostdin",
+		"-hide_banner",
+		"-loglevel", "error",
+		"-threads", "1",
 		"-y",
 		"-ss", strconv.Itoa(offsetSeconds),
 		"-i", videoPath,
@@ -696,4 +763,20 @@ func thumbnailNodeBuildArgs(videoPath, outputPath string, offsetSeconds, width i
 func thumbnailNodeIsVideoFile(name string) bool {
 	_, ok := thumbnailVideoExtensions[strings.ToLower(filepath.Ext(strings.TrimSpace(name)))]
 	return ok
+}
+
+func (e *thumbnailNodeExecutor) acquireFFmpegSlot(ctx context.Context) error {
+	select {
+	case e.sem <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (e *thumbnailNodeExecutor) releaseFFmpegSlot() {
+	select {
+	case <-e.sem:
+	default:
+	}
 }

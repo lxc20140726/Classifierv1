@@ -2316,8 +2316,11 @@ func TestThumbnailNodeHelpersAndFfmpegMissing(t *testing.T) {
 		if len(args) == 0 {
 			t.Fatalf("thumbnailNodeBuildArgs() returned empty args")
 		}
-		if args[0] != "-y" {
-			t.Fatalf("args[0] = %q, want -y", args[0])
+		joined := strings.Join(args, " ")
+		for _, required := range []string{"-nostdin", "-hide_banner", "-loglevel error", "-threads 1", "-y"} {
+			if !strings.Contains(joined, required) {
+				t.Fatalf("args missing %q: %s", required, joined)
+			}
 		}
 		if args[len(args)-1] != "/out/thumb.jpg" {
 			t.Fatalf("last arg = %q, want /out/thumb.jpg", args[len(args)-1])

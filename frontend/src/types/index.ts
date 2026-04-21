@@ -230,6 +230,14 @@ export interface NodeRun {
   input_json: string
   output_json: string
   error: string
+  progress_percent?: number
+  progress_done?: number
+  progress_total?: number
+  progress_stage?: string
+  progress_message?: string
+  progress_source_path?: string
+  progress_target_path?: string
+  progress_updated_at?: string
   started_at: string | null
   finished_at: string | null
   created_at: string
@@ -432,9 +440,18 @@ export interface FolderLineageResponse {
 export interface WorkflowNodeEvent {
   job_id: string
   workflow_run_id: string
+  node_run_id?: string
   folder_id?: string
   node_id: string
   node_type: string
+  percent?: number
+  done?: number
+  total?: number
+  stage?: string
+  message?: string
+  source_path?: string
+  target_path?: string
+  progress_updated_at?: string
   status?: NodeRunStatus
   error?: string
 }

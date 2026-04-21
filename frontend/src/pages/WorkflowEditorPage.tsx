@@ -1004,24 +1004,14 @@ function NodeConfigPanel({ nodeId, nodeType, config, updateNodeConfig }: NodeCon
           <NodeUsageHint>
             `items` 会透传原处理项；`archive_items` 会产出新的压缩包处理项，其中 `source_path` 仍保留原始来源，`current_path` 指向压缩产物，可直接接到 move-node / collect-node。
           </NodeUsageHint>
-          <ConfigField label="压缩范围" hint="all：所有文件夹；leaf：仅叶子节点（默认 all）">
-            <select
-              value={cfgStr(config, 'scope') || 'all'}
-              onChange={(e) => set('scope', e.target.value)}
-              className={FIELD_CLS}
-            >
-              <option value="all">all — 所有</option>
-              <option value="leaf">leaf — 仅叶子</option>
-            </select>
-          </ConfigField>
-          <ConfigField label="压缩格式" hint="cbz：漫画专用格式；zip：通用压缩（默认 cbz）">
+          <ConfigField label="打包模式" hint="默认 CBZ 存储式打包（zip.Store），仅封装不做 Deflate 压缩，优先降低 CPU 占用">
             <select
               value={cfgStr(config, 'format') || 'cbz'}
               onChange={(e) => set('format', e.target.value)}
               className={FIELD_CLS}
             >
-              <option value="cbz">cbz — 漫画格式</option>
-              <option value="zip">zip — 通用压缩</option>
+              <option value="cbz">cbz — 存储式打包（默认）</option>
+              <option value="zip">zip — 存储式打包</option>
             </select>
           </ConfigField>
           <ConfigField label="输出路径引用" hint="默认使用输出目录体系，仍支持自定义路径">
@@ -1498,12 +1488,23 @@ function WorkflowNodeCard({ id, data, selected }: NodeProps<EditorNode>) {
 
         {nodeRun && (() => {
           const cfg = NODE_STATUS_CFG[nodeRun.status]
+          const hasProgress = typeof nodeRun.progress_percent === 'number'
+          const progressLabel = hasProgress ? `${nodeRun.progress_percent}%` : '未开始'
+          const progressStage = nodeRun.progress_stage || nodeRun.progress_message || ''
+          const progressPath = nodeRun.progress_source_path || nodeRun.progress_target_path || ''
           return (
-            <div className="mt-2 flex items-center gap-2">
-              <div className={cn('inline-flex items-center gap-1.5 px-2 py-1 text-[10px] font-bold', cfg.cls)}>
-                {cfg.icon}
-                {cfg.label}
+            <div className="mt-2 space-y-2">
+              <div className="flex items-center gap-2">
+                <div className={cn('inline-flex items-center gap-1.5 px-2 py-1 text-[10px] font-bold', cfg.cls)}>
+                  {cfg.icon}
+                  {cfg.label}
+                </div>
+                <span className="text-[10px] font-black text-foreground">{progressLabel}</span>
+                {progressStage && <span className="truncate text-[10px] font-bold text-muted-foreground">{progressStage}</span>}
               </div>
+              {progressPath && (
+                <p className="truncate font-mono text-[10px] font-bold text-muted-foreground">{progressPath}</p>
+              )}
               {nodeRun.error && (
                 <button
                   type="button"
@@ -1516,7 +1517,6 @@ function WorkflowNodeCard({ id, data, selected }: NodeProps<EditorNode>) {
             </div>
           )
         })()}
-
         {data.type === 'classification-db-result-preview' && (
           <div className="mt-2 max-h-[42vh] overflow-y-auto">
             <ClassificationPreviewInline summary={classificationSummary} />

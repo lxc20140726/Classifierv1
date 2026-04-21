@@ -167,4 +167,50 @@ describe('workflowRunStore', () => {
       vi.useRealTimers()
     }
   })
+
+  it('node_progress 事件按 node_run_id 更新节点进度且不触发详情刷新', () => {
+    const detailSpy = vi.spyOn(useWorkflowRunStore.getState(), 'fetchRunDetail')
+    useWorkflowRunStore.setState({
+      nodesByRunId: {
+        'run-1': [{
+          id: 'nr-1',
+          workflow_run_id: 'run-1',
+          node_id: 'node-1',
+          node_type: 'compress-node',
+          sequence: 1,
+          status: 'running',
+          input_json: '',
+          output_json: '',
+          error: '',
+          started_at: null,
+          finished_at: null,
+          created_at: '2026-01-01T00:00:00Z',
+        }],
+      },
+    })
+
+    useWorkflowRunStore.getState().handleNodeProgress({
+      job_id: 'job-1',
+      workflow_run_id: 'run-1',
+      node_run_id: 'nr-1',
+      node_id: 'node-1',
+      node_type: 'compress-node',
+      percent: 75,
+      done: 3,
+      total: 4,
+      stage: 'writing',
+      message: '已打包 3/4',
+      source_path: '/source/a.jpg',
+      target_path: '/target/a.cbz',
+    })
+
+    const node = useWorkflowRunStore.getState().nodesByRunId['run-1'][0]
+    expect(node.progress_percent).toBe(75)
+    expect(node.progress_done).toBe(3)
+    expect(node.progress_total).toBe(4)
+    expect(node.progress_stage).toBe('writing')
+    expect(node.progress_source_path).toBe('/source/a.jpg')
+    expect(node.progress_target_path).toBe('/target/a.cbz')
+    expect(detailSpy).not.toHaveBeenCalled()
+  })
 })

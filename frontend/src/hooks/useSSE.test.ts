@@ -24,6 +24,7 @@ const jobStoreState = {
 
 const workflowRunStoreState = {
   handleNodeEvent: vi.fn(),
+  handleNodeProgress: vi.fn(),
   handleRunUpdated: vi.fn(),
   handleReviewEvent: vi.fn(),
   runsById: {} as Record<string, { folder_id?: string }>,

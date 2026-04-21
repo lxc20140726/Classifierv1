@@ -78,6 +78,7 @@ interface WorkflowRunStore {
   handleReviewEvent: (workflowRunId: string) => void
   refreshRunFromEvent: (runId: string) => void
   handleNodeEvent: (event: WorkflowNodeEvent) => void
+  handleNodeProgress: (event: WorkflowNodeEvent) => void
   buildRunCardView: (workflowDefId: string, totalNodes: number, folderId?: string) => WorkflowRunCardView | null
 }
 
@@ -590,11 +591,14 @@ export const useWorkflowRunStore = create<WorkflowRunStore>((set, get) => ({
       if (idx !== -1) {
         updatedNodes = existing.map((nodeRun, index) => {
           if (index !== idx) return nodeRun
+          const terminal = status !== 'running'
           return {
             ...nodeRun,
             node_type: (nodeType as NodeType) || nodeRun.node_type,
             status,
             error: event.error ?? nodeRun.error,
+            progress_percent: terminal ? 100 : nodeRun.progress_percent,
+            progress_done: terminal ? (nodeRun.progress_total ?? nodeRun.progress_done) : nodeRun.progress_done,
             started_at: status === 'running' ? (nodeRun.started_at ?? now) : nodeRun.started_at,
             finished_at: status !== 'running' ? now : nodeRun.finished_at,
           }
@@ -610,6 +614,7 @@ export const useWorkflowRunStore = create<WorkflowRunStore>((set, get) => ({
           input_json: '',
           output_json: '',
           error: event.error ?? '',
+          progress_percent: status !== 'running' ? 100 : undefined,
           started_at: status === 'running' ? now : null,
           finished_at: status !== 'running' ? now : null,
           created_at: now,
@@ -623,6 +628,73 @@ export const useWorkflowRunStore = create<WorkflowRunStore>((set, get) => ({
     })
 
     get().refreshRunFromEvent(workflowRunID)
+  },
+
+  handleNodeProgress(event) {
+    const workflowRunID = event.workflow_run_id
+    const nodeRunID = event.node_run_id ?? ''
+    const nodeID = event.node_id
+    const nodeType = event.node_type
+    if (!workflowRunID || !nodeID) return
+
+    set((state) => {
+      const existing = state.nodesByRunId[workflowRunID] ?? []
+      const idxByRunID = nodeRunID
+        ? existing.findIndex((nodeRun) => nodeRun.id === nodeRunID)
+        : -1
+      const idxByNodeID = existing.findIndex((nodeRun) => nodeRun.node_id === nodeID)
+      const idx = idxByRunID !== -1 ? idxByRunID : idxByNodeID
+      const now = event.progress_updated_at ?? new Date().toISOString()
+
+      if (idx !== -1) {
+        const updatedNodes = existing.map((nodeRun, index) => {
+          if (index !== idx) return nodeRun
+          return {
+            ...nodeRun,
+            node_type: (nodeType as NodeType) || nodeRun.node_type,
+            status: nodeRun.status === 'pending' ? 'running' : nodeRun.status,
+            progress_percent: event.percent ?? nodeRun.progress_percent,
+            progress_done: event.done ?? nodeRun.progress_done,
+            progress_total: event.total ?? nodeRun.progress_total,
+            progress_stage: event.stage ?? nodeRun.progress_stage,
+            progress_message: event.message ?? nodeRun.progress_message,
+            progress_source_path: event.source_path ?? nodeRun.progress_source_path,
+            progress_target_path: event.target_path ?? nodeRun.progress_target_path,
+            progress_updated_at: now,
+            started_at: nodeRun.started_at ?? now,
+          }
+        })
+        return {
+          nodesByRunId: { ...state.nodesByRunId, [workflowRunID]: updatedNodes },
+        }
+      }
+
+      const placeholder: NodeRun = {
+        id: nodeRunID,
+        workflow_run_id: workflowRunID,
+        node_id: nodeID,
+        node_type: nodeType as NodeType,
+        sequence: 0,
+        status: 'running',
+        input_json: '',
+        output_json: '',
+        error: '',
+        progress_percent: event.percent,
+        progress_done: event.done,
+        progress_total: event.total,
+        progress_stage: event.stage,
+        progress_message: event.message,
+        progress_source_path: event.source_path,
+        progress_target_path: event.target_path,
+        progress_updated_at: now,
+        started_at: now,
+        finished_at: null,
+        created_at: now,
+      }
+      return {
+        nodesByRunId: { ...state.nodesByRunId, [workflowRunID]: [...existing, placeholder] },
+      }
+    })
   },
 
   buildRunCardView(workflowDefId, totalNodes, folderId) {
