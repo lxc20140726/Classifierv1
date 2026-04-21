@@ -201,7 +201,7 @@ export default function SettingsPage() {
 
       <form onSubmit={(e) => void handleSubmit(e)} className="space-y-8">
         <div className="space-y-4 border-2 border-foreground bg-card p-6 shadow-hard">
-          <div className="flex items-center justify-between gap-4">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <label className="block text-sm font-black tracking-widest">扫描输入目录（可多个）</label>
               <p className="mt-1 text-xs font-bold text-muted-foreground">手动扫描和扫描计划任务围绕这组目录工作。</p>
@@ -209,7 +209,7 @@ export default function SettingsPage() {
             <button
               type="button"
               onClick={addScanInputDirRow}
-              className="flex items-center gap-2 border-2 border-foreground bg-background px-4 py-2 text-sm font-bold transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5"
+              className="flex w-full items-center justify-center gap-2 border-2 border-foreground bg-background px-4 py-2 text-sm font-bold transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5 sm:w-auto"
             >
               <Plus className="h-4 w-4" />
               添加目录
@@ -217,7 +217,7 @@ export default function SettingsPage() {
           </div>
           <div className="space-y-2">
             {form.scanInputDirs.map((scanInputDir, index) => (
-              <div key={index} className="flex gap-2">
+              <div key={index} className="flex flex-col gap-2 sm:flex-row">
                 <input
                   value={scanInputDir}
                   onChange={(event) => updateScanInputDirRow(index, event.target.value)}
@@ -230,14 +230,14 @@ export default function SettingsPage() {
                     setPickerTarget({ kind: 'scan', index })
                     setPickerOpen(true)
                   }}
-                  className="border-2 border-foreground bg-background px-3 py-2 text-foreground transition-all hover:bg-foreground hover:text-background"
+                  className="border-2 border-foreground bg-background px-3 py-2 text-foreground transition-all hover:bg-foreground hover:text-background sm:shrink-0"
                 >
                   <FolderSearch className="h-4 w-4" />
                 </button>
                 <button
                   type="button"
                   onClick={() => removeScanInputDirRow(index)}
-                  className="border-2 border-red-900 bg-red-100 px-3 py-2 text-red-900 transition-all hover:bg-red-900 hover:text-red-100"
+                  className="border-2 border-red-900 bg-red-100 px-3 py-2 text-red-900 transition-all hover:bg-red-900 hover:text-red-100 sm:shrink-0"
                 >
                   <Trash2 className="h-4 w-4" />
                 </button>
@@ -254,7 +254,7 @@ export default function SettingsPage() {
           <div className="space-y-4">
             {OUTPUT_DIR_KEYS.map((key) => (
               <div key={key} className="border-2 border-foreground bg-card p-5 shadow-hard transition-all hover:-translate-y-1 hover:shadow-hard-hover">
-                <div className="mb-3 flex items-start justify-between gap-3">
+                <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div>
                     <p className="text-sm font-black">{OUTPUT_DIR_LABELS[key]}</p>
                     <p className="mt-1 text-[10px] font-bold text-muted-foreground">对应 `{key}` 分类，第 1 项默认</p>
@@ -262,7 +262,7 @@ export default function SettingsPage() {
                   <button
                     type="button"
                     onClick={() => addOutputDirRow(key)}
-                    className="flex items-center gap-2 border-2 border-foreground bg-background px-3 py-1.5 text-xs font-bold transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5"
+                    className="flex w-full items-center justify-center gap-2 border-2 border-foreground bg-background px-3 py-1.5 text-xs font-bold transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5 sm:w-auto"
                   >
                     <Plus className="h-4 w-4" />
                     添加目录
@@ -270,7 +270,7 @@ export default function SettingsPage() {
                 </div>
                 <div className="space-y-2">
                   {form.outputDirs[key].map((value, index) => (
-                    <div key={`${key}-${index}`} className="flex gap-2">
+                    <div key={`${key}-${index}`} className="flex flex-col gap-2 sm:flex-row">
                       <input
                         value={value}
                         onChange={(event) => updateOutputDirRow(key, index, event.target.value)}
@@ -283,14 +283,14 @@ export default function SettingsPage() {
                           setPickerTarget({ kind: 'output', key, index })
                           setPickerOpen(true)
                         }}
-                        className="border-2 border-foreground bg-background px-3 py-2 text-foreground transition-all hover:bg-foreground hover:text-background"
+                        className="border-2 border-foreground bg-background px-3 py-2 text-foreground transition-all hover:bg-foreground hover:text-background sm:shrink-0"
                       >
                         <FolderSearch className="h-4 w-4" />
                       </button>
                       <button
                         type="button"
                         onClick={() => removeOutputDirRow(key, index)}
-                        className="border-2 border-red-900 bg-red-100 px-3 py-2 text-red-900 transition-all hover:bg-red-900 hover:text-red-100"
+                        className="border-2 border-red-900 bg-red-100 px-3 py-2 text-red-900 transition-all hover:bg-red-900 hover:text-red-100 sm:shrink-0"
                       >
                         <Trash2 className="h-4 w-4" />
                       </button>

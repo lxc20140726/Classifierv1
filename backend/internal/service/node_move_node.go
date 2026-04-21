@@ -626,9 +626,13 @@ func (e *phase4MoveNodeExecutor) moveDirectoryArtifacts(
 	}
 
 	results := make([]ProcessingStepResult, 0, len(entries))
+	allowDirectFileOnly := len(item.Files) > 0
 	for _, entry := range entries {
 		sourceFilePath := joinWorkflowPath(sourcePath, entry.Name)
 		if entry.IsDir {
+			if allowDirectFileOnly {
+				continue
+			}
 			return nil, fmt.Errorf("directory item %q contains subdirectory %q; recursive merge is not supported", sourcePath, sourceFilePath)
 		}
 

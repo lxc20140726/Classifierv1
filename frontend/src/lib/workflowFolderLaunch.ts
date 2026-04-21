@@ -1,7 +1,4 @@
-import {
-  applyFolderSelectionToEnabledPickers,
-  checkLaunchableFolderPickers,
-} from '@/lib/workflowGraphFolderPicker'
+﻿import { checkLaunchableFolderPickers } from '@/lib/workflowGraphFolderPicker'
 import type { WorkflowDefinition } from '@/types'
 
 export interface WorkflowFolderLaunchability {
@@ -13,15 +10,14 @@ export interface WorkflowFolderLaunchability {
 
 export interface LaunchWorkflowForFolderParams {
   workflowDef: Pick<WorkflowDefinition, 'id' | 'graph_json'>
-  folderId: string
-  updateWorkflowGraph: (workflowDefId: string, graphJson: string) => Promise<void>
-  startWorkflow: (workflowDefId: string) => Promise<string>
+  folderIds: string[]
+  startWorkflow: (workflowDefId: string, folderIds: string[]) => Promise<string>
   bindLatestLaunch: (workflowDefId: string, jobId: string, folderId?: string) => Promise<void>
 }
 
 export interface LaunchWorkflowForFolderResult {
   jobId: string
-  patchedGraphJson: string
+  folderIds: string[]
   enabledPickerCount: number
 }
 
@@ -46,8 +42,7 @@ export function getWorkflowFolderLaunchability(graphJson: string): WorkflowFolde
 
 export async function launchWorkflowForFolder({
   workflowDef,
-  folderId,
-  updateWorkflowGraph,
+  folderIds,
   startWorkflow,
   bindLatestLaunch,
 }: LaunchWorkflowForFolderParams): Promise<LaunchWorkflowForFolderResult> {
@@ -56,23 +51,21 @@ export async function launchWorkflowForFolder({
     throw new Error(launchability.error ?? '该工作流暂不可快捷启动')
   }
 
-  const normalizedFolderId = folderId.trim()
-  if (normalizedFolderId === '') {
-    throw new Error('请选择一条文件夹记录')
+  const normalizedFolderIDs = [...new Set(folderIds.map((id) => id.trim()).filter((id) => id !== ''))]
+  if (normalizedFolderIDs.length === 0) {
+    throw new Error('请选择至少一个文件夹')
   }
 
-  const patchedGraphJson = applyFolderSelectionToEnabledPickers(
-    workflowDef.graph_json,
-    normalizedFolderId,
-  )
-
-  await updateWorkflowGraph(workflowDef.id, patchedGraphJson)
-  const jobId = await startWorkflow(workflowDef.id)
-  void bindLatestLaunch(workflowDef.id, jobId, normalizedFolderId)
+  const jobId = await startWorkflow(workflowDef.id, normalizedFolderIDs)
+  if (normalizedFolderIDs.length === 1) {
+    void bindLatestLaunch(workflowDef.id, jobId, normalizedFolderIDs[0])
+  } else {
+    void bindLatestLaunch(workflowDef.id, jobId)
+  }
 
   return {
     jobId,
-    patchedGraphJson,
+    folderIds: normalizedFolderIDs,
     enabledPickerCount: launchability.enabledPickerCount,
   }
 }

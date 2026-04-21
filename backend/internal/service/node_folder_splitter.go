@@ -146,9 +146,8 @@ func folderSplitterCollectItems(entry ClassifiedEntry, rootPath string, depth in
 		return
 	}
 
-	isMixedRoot := strings.EqualFold(folderSplitterResolveEntryCategory(entry), "mixed")
-	keepMixedRoot := isMixedRoot && folderSplitterHasRecognizedMediaFiles(entry.Files)
-	if keepMixedRoot {
+	keepCurrentFiles := folderSplitterHasRecognizedMediaFiles(entry.Files)
+	if keepCurrentFiles {
 		*out = append(*out, folderSplitterBuildSelfItem(entry, rootPath))
 	}
 
@@ -162,7 +161,7 @@ func folderSplitterCollectItems(entry ClassifiedEntry, rootPath string, depth in
 	}
 
 	for _, child := range directChildren {
-		if keepMixedRoot && folderSplitterShouldAbsorbPromoChild(entry, child) {
+		if keepCurrentFiles && folderSplitterShouldAbsorbPromoChild(entry, child) {
 			continue
 		}
 		if splitWithSubdirs && len(child.Subtree) > 0 {

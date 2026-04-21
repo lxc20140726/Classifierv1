@@ -16,6 +16,7 @@ import type {
 } from '@/types'
 
 interface JobProgressEvent extends ScanProgressEvent {
+  status: JobDoneEvent['status']
   failed?: number
 }
 
@@ -69,7 +70,7 @@ export function useSSE() {
         const payload = JSON.parse(event.data) as JobProgressEvent
         useJobStore.getState().handleJobProgress({
           job_id: payload.job_id,
-          status: 'running',
+          status: payload.status,
           done: payload.done,
           total: payload.total,
           failed: payload.failed ?? 0,
@@ -149,7 +150,10 @@ export function useSSE() {
         ) {
           const folderId = payload.folder_id?.trim() ?? ''
           if (folderId !== '') {
-            void useLiveClassificationStore.getState().syncFolder(folderId)
+            const focusFolderId = useLiveClassificationStore.getState().focusFolderId.trim()
+            if (focusFolderId === '' || focusFolderId === folderId) {
+              void useLiveClassificationStore.getState().syncFolder(folderId)
+            }
             void useFolderStore.getState().syncFolder(folderId).finally(() => {
               notifyFolderActivityUpdated()
             })

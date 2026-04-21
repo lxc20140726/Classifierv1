@@ -253,14 +253,23 @@ func TestFolderSplitterExecutorPhotoDirectoryWithPhotoSubdirsStaysPhoto(t *testi
 	if !ok {
 		t.Fatalf("output type = %T, want []ProcessingItem", out.Outputs["items"].Value)
 	}
-	if len(items) != 1 {
-		t.Fatalf("len(items) = %d, want 1", len(items))
+	if len(items) != 2 {
+		t.Fatalf("len(items) = %d, want 2", len(items))
 	}
 	if got := items[0].Category; got != "photo" {
 		t.Fatalf("items[0].Category = %q, want photo", got)
 	}
-	if got := items[0].SourcePath; got != "/root/Top Album/Photo[120P]" {
-		t.Fatalf("items[0].SourcePath = %q, want /root/Top Album/Photo[120P]", got)
+	if got := items[0].SourcePath; got != "/root/Top Album" {
+		t.Fatalf("items[0].SourcePath = %q, want /root/Top Album", got)
+	}
+	if len(items[0].Files) != 1 || items[0].Files[0].Name != "Top.jpg" {
+		t.Fatalf("items[0].Files = %#v, want Top.jpg", items[0].Files)
+	}
+	if got := items[1].Category; got != "photo" {
+		t.Fatalf("items[1].Category = %q, want photo", got)
+	}
+	if got := items[1].SourcePath; got != "/root/Top Album/Photo[120P]" {
+		t.Fatalf("items[1].SourcePath = %q, want /root/Top Album/Photo[120P]", got)
 	}
 }
 
@@ -1040,6 +1049,57 @@ func TestMoveNodeExecutorMergeValidationAndArchiveFlatten(t *testing.T) {
 		}
 	})
 
+	t.Run("directory_with_file_list_skips_subdirectories_and_moves_direct_files", func(t *testing.T) {
+		t.Parallel()
+
+		root := t.TempDir()
+		sourcePath := filepath.Join(root, "source", "album")
+		previewPath := filepath.Join(sourcePath, "preview-115")
+		targetDir := filepath.Join(root, "target")
+		rootImage := filepath.Join(sourcePath, "P-115 (1).jpg")
+		previewImage := filepath.Join(previewPath, "P-115 (2).jpg")
+		mustMkdirAll(t, previewPath)
+		if err := os.WriteFile(rootImage, []byte("root"), 0o644); err != nil {
+			t.Fatalf("os.WriteFile(root image) error = %v", err)
+		}
+		if err := os.WriteFile(previewImage, []byte("preview"), 0o644); err != nil {
+			t.Fatalf("os.WriteFile(preview image) error = %v", err)
+		}
+
+		executor := newPhase4MoveNodeExecutor(fs.NewOSAdapter(), nil)
+		out, err := executor.Execute(context.Background(), NodeExecutionInput{
+			Node: repository.WorkflowGraphNode{Config: map[string]any{"target_dir": targetDir}},
+			Inputs: testInputs(map[string]any{"item": ProcessingItem{
+				SourcePath: sourcePath,
+				RootPath:   sourcePath,
+				SourceKind: ProcessingItemSourceKindDirectory,
+				Category:   "photo",
+				Files:      []FileEntry{{Name: "P-115 (1).jpg", Ext: ".jpg"}},
+			}}),
+		})
+		if err != nil {
+			t.Fatalf("Execute() error = %v", err)
+		}
+
+		results := out.Outputs["step_results"].Value.([]ProcessingStepResult)
+		if len(results) != 1 {
+			t.Fatalf("len(step_results) = %d, want 1", len(results))
+		}
+		targetImage := filepath.Join(targetDir, "album", "P-115 (1).jpg")
+		if !pathExists(t, targetImage) {
+			t.Fatalf("root image should move to %q", targetImage)
+		}
+		if pathExists(t, rootImage) {
+			t.Fatalf("root image should be moved out of source")
+		}
+		if !pathExists(t, previewImage) {
+			t.Fatalf("preview subdirectory file should remain for its own processing item")
+		}
+		if pathExists(t, filepath.Join(targetDir, "album", "P-115 (2).jpg")) {
+			t.Fatalf("preview file should not be moved by the root direct-file item")
+		}
+	})
+
 	t.Run("archive_items_flatten_relative_path_to_filename", func(t *testing.T) {
 		t.Parallel()
 
@@ -1629,6 +1689,60 @@ func TestCompressNodeExecutorUnsupportedAndArchiveNaming(t *testing.T) {
 		archiveItems := out.Outputs["archive_items"].Value.([]ProcessingItem)
 		if len(archiveItems) != 1 {
 			t.Fatalf("len(archive_items) = %d, want 1", len(archiveItems))
+		}
+	})
+
+	t.Run("file_list_item_with_subdirectory_archives_direct_files_only", func(t *testing.T) {
+		t.Parallel()
+
+		root := t.TempDir()
+		sourcePath := filepath.Join(root, "source", "album")
+		previewPath := filepath.Join(sourcePath, "preview-115")
+		archiveDir := filepath.Join(root, "archives")
+		mustMkdirAll(t, previewPath)
+		if err := os.WriteFile(filepath.Join(sourcePath, "P-115 (1).jpg"), []byte("root"), 0o644); err != nil {
+			t.Fatalf("os.WriteFile(root image) error = %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(previewPath, "P-115 (2).jpg"), []byte("preview"), 0o644); err != nil {
+			t.Fatalf("os.WriteFile(preview image) error = %v", err)
+		}
+
+		out, err := newCompressNodeExecutor(fs.NewOSAdapter()).Execute(context.Background(), NodeExecutionInput{
+			Node: repository.WorkflowGraphNode{
+				Config: map[string]any{
+					"target_dir": archiveDir,
+					"format":     "cbz",
+				},
+			},
+			Inputs: testInputs(map[string]any{
+				"items": []ProcessingItem{{
+					SourcePath: sourcePath,
+					TargetName: "album",
+					SourceKind: ProcessingItemSourceKindDirectory,
+					Files:      []FileEntry{{Name: "P-115 (1).jpg", Ext: ".jpg"}},
+				}},
+			}),
+		})
+		if err != nil {
+			t.Fatalf("Execute() error = %v", err)
+		}
+
+		stepResults := out.Outputs["step_results"].Value.([]ProcessingStepResult)
+		if len(stepResults) != 1 {
+			t.Fatalf("len(step_results) = %d, want 1", len(stepResults))
+		}
+
+		reader, err := zip.OpenReader(stepResults[0].TargetPath)
+		if err != nil {
+			t.Fatalf("zip.OpenReader(%q) error = %v", stepResults[0].TargetPath, err)
+		}
+		defer reader.Close()
+
+		if len(reader.File) != 1 {
+			t.Fatalf("archive entries = %d, want 1", len(reader.File))
+		}
+		if reader.File[0].Name != "P-115 (1).jpg" {
+			t.Fatalf("archive entry = %q, want P-115 (1).jpg", reader.File[0].Name)
 		}
 	})
 

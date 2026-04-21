@@ -82,7 +82,7 @@ export function DirPicker({ open, initialPath = '', onConfirm, onCancel, title }
 
         {/* Current path input */}
         <div className="border-b-2 border-foreground px-5 py-4 bg-muted/30">
-          <div className="flex gap-2">
+          <div className="flex flex-col gap-2 sm:flex-row">
             <input
               type="text"
               value={pathInput}
@@ -94,7 +94,7 @@ export function DirPicker({ open, initialPath = '', onConfirm, onCancel, title }
             <button
               type="button"
               onClick={() => { void navigate(pathInput.trim()) }}
-              className="border-2 border-foreground bg-background px-4 py-2 text-sm font-bold transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5"
+              className="border-2 border-foreground bg-background px-4 py-2 text-sm font-bold transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5 sm:shrink-0"
             >
               前往
             </button>
@@ -175,15 +175,15 @@ export function DirPicker({ open, initialPath = '', onConfirm, onCancel, title }
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between border-t-2 border-foreground bg-muted/30 px-5 py-4">
-          <p className="max-w-[50%] truncate text-xs font-mono font-bold text-foreground">
+        <div className="flex flex-col gap-3 border-t-2 border-foreground bg-muted/30 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <p className="w-full break-all text-xs font-mono font-bold text-foreground sm:max-w-[50%]">
             {selected ?? '未选择'}
           </p>
-          <div className="flex gap-3">
+          <div className="flex w-full gap-3 sm:w-auto">
             <button
               type="button"
               onClick={onCancel}
-              className="border-2 border-foreground bg-background px-4 py-2 text-sm font-bold transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5"
+              className="flex-1 border-2 border-foreground bg-background px-4 py-2 text-sm font-bold transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5 sm:flex-none"
             >
               取消
             </button>
@@ -191,7 +191,7 @@ export function DirPicker({ open, initialPath = '', onConfirm, onCancel, title }
               type="button"
               disabled={selected === null}
               onClick={() => { if (selected) onConfirm(selected) }}
-              className="border-2 border-foreground bg-primary px-4 py-2 text-sm font-bold text-primary-foreground transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-primary disabled:hover:text-primary-foreground disabled:hover:shadow-none disabled:hover:translate-y-0"
+              className="flex-1 border-2 border-foreground bg-primary px-4 py-2 text-sm font-bold text-primary-foreground transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-primary disabled:hover:text-primary-foreground disabled:hover:shadow-none disabled:hover:translate-y-0 sm:flex-none"
             >
               确认选择
             </button>

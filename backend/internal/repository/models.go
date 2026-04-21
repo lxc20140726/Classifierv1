@@ -120,20 +120,21 @@ type FolderWorkflowSummary struct {
 }
 
 type Job struct {
-	ID            string     `db:"id"`
-	Type          string     `db:"type"`
-	WorkflowDefID string     `db:"workflow_def_id"`
-	SourceDir     string     `db:"source_dir"`
-	Status        string     `db:"status"`
-	FolderIDs     string     `db:"folder_ids"`
-	Total         int        `db:"total"`
-	Done          int        `db:"done"`
-	Failed        int        `db:"failed"`
-	Error         string     `db:"error"`
-	StartedAt     *time.Time `db:"started_at"`
-	FinishedAt    *time.Time `db:"finished_at"`
-	CreatedAt     time.Time  `db:"created_at"`
-	UpdatedAt     time.Time  `db:"updated_at"`
+	ID            string         `db:"id"`
+	Type          string         `db:"type"`
+	WorkflowDefID string         `db:"workflow_def_id"`
+	SourceDir     string         `db:"source_dir"`
+	Status        string         `db:"status"`
+	FolderIDs     string         `db:"folder_ids"`
+	FolderTargets []FolderTarget `db:"-" json:"folder_targets,omitempty"`
+	Total         int            `db:"total"`
+	Done          int            `db:"done"`
+	Failed        int            `db:"failed"`
+	Error         string         `db:"error"`
+	StartedAt     *time.Time     `db:"started_at"`
+	FinishedAt    *time.Time     `db:"finished_at"`
+	CreatedAt     time.Time      `db:"created_at"`
+	UpdatedAt     time.Time      `db:"updated_at"`
 }
 
 type ScheduledWorkflow struct {
@@ -250,6 +251,8 @@ type WorkflowRun struct {
 	ID             string     `db:"id"              json:"id"`
 	JobID          string     `db:"job_id"          json:"job_id"`
 	FolderID       string     `db:"folder_id"       json:"folder_id"`
+	FolderName     string     `db:"-"               json:"folder_name,omitempty"`
+	FolderPath     string     `db:"-"               json:"folder_path,omitempty"`
 	SourceDir      string     `db:"source_dir"      json:"source_dir"`
 	WorkflowDefID  string     `db:"workflow_def_id" json:"workflow_def_id"`
 	Status         string     `db:"status"          json:"status"`
@@ -287,6 +290,12 @@ type NodeRun struct {
 	StartedAt          *time.Time `db:"started_at"      json:"started_at"`
 	FinishedAt         *time.Time `db:"finished_at"     json:"finished_at"`
 	CreatedAt          time.Time  `db:"created_at"      json:"created_at"`
+}
+
+type FolderTarget struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Path string `json:"path"`
 }
 
 type NodeRunProgress struct {

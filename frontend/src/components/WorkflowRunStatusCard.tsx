@@ -1,12 +1,15 @@
-import { cn } from '@/lib/utils'
-import type { WorkflowRunStatus } from '@/types'
+﻿import { cn } from '@/lib/utils'
 import type { WorkflowRunCardView } from '@/store/workflowRunStore'
+import type { WorkflowRunStatus } from '@/types'
 
 export interface WorkflowRunStatusCardProps {
   title?: string
   view: WorkflowRunCardView | null
   className?: string
   onOpenJobs?: () => void
+  onApproveAllPending?: () => void
+  onRollbackAllPending?: () => void
+  actionLoading?: boolean
 }
 
 const RUN_STATUS_LABELS: Record<WorkflowRunStatus, string> = {
@@ -30,12 +33,19 @@ const RUN_STATUS_BADGE_CLS: Record<WorkflowRunStatus, string> = {
 }
 
 export function WorkflowRunStatusCard({
-  title = '当前运行卡片',
+  title = '最近一次运行状态',
   view,
   className,
   onOpenJobs,
+  onApproveAllPending,
+  onRollbackAllPending,
+  actionLoading = false,
 }: WorkflowRunStatusCardProps) {
   if (!view) return null
+
+  const progressPercent = typeof view.currentNodeProgressPercent === 'number'
+    ? Math.max(0, Math.min(100, view.currentNodeProgressPercent))
+    : 0
 
   return (
     <div className={cn('border-2 border-foreground bg-background p-3 shadow-hard', className)}>
@@ -53,7 +63,7 @@ export function WorkflowRunStatusCard({
           <div className="flex items-start justify-between gap-3">
             <span className="font-black text-muted-foreground">当前节点</span>
             <span className="text-right font-mono font-bold">
-              {view.currentNodeId || '—'}
+              {view.currentNodeId || '-'}
               {view.currentNodeType ? ` (${view.currentNodeType})` : ''}
             </span>
           </div>
@@ -61,8 +71,31 @@ export function WorkflowRunStatusCard({
           <div className="flex items-start justify-between gap-3">
             <span className="font-black text-muted-foreground">完成进度</span>
             <span className="font-black tabular-nums">
-              {view.completedNodes} / {view.totalNodes > 0 ? view.totalNodes : '—'}
+              {view.completedNodes} / {view.totalNodes > 0 ? view.totalNodes : '-'}
             </span>
+          </div>
+
+          <div className="space-y-1">
+            <div className="flex items-start justify-between gap-3">
+              <span className="font-black text-muted-foreground">节点进度</span>
+              <span className="font-black tabular-nums">
+                {view.currentNodeProgressDone ?? '-'} / {view.currentNodeProgressTotal ?? '-'}
+              </span>
+            </div>
+            <div className="h-2 w-full overflow-hidden border-2 border-foreground bg-muted">
+              <div className="h-full bg-foreground transition-all duration-300" style={{ width: `${progressPercent}%` }} />
+            </div>
+            <p className="text-[11px] font-bold text-muted-foreground">{view.currentNodeProgressText}</p>
+            {view.progressSourcePath && (
+              <p className="truncate font-mono text-[10px] text-muted-foreground" title={view.progressSourcePath}>
+                源：{view.progressSourcePath}
+              </p>
+            )}
+            {view.progressTargetPath && (
+              <p className="truncate font-mono text-[10px] text-muted-foreground" title={view.progressTargetPath}>
+                目标：{view.progressTargetPath}
+              </p>
+            )}
           </div>
 
           {view.status === 'waiting_input' && view.reviewSummary && (
@@ -74,6 +107,26 @@ export function WorkflowRunStatusCard({
               <div className="rounded border-2 border-purple-900 bg-purple-50 px-2 py-1 text-[11px] font-bold text-purple-900">
                 待确认 {view.reviewSummary.pending}，已通过 {view.reviewSummary.approved}，已回退 {view.reviewSummary.rolled_back}
               </div>
+              {view.pendingReviewCount > 0 && onApproveAllPending && onRollbackAllPending && (
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={actionLoading}
+                    onClick={onApproveAllPending}
+                    className="border-2 border-green-900 bg-green-200 px-2 py-1 text-[11px] font-bold text-green-900 hover:bg-green-900 hover:text-green-100 disabled:opacity-50"
+                  >
+                    全部确认通过
+                  </button>
+                  <button
+                    type="button"
+                    disabled={actionLoading}
+                    onClick={onRollbackAllPending}
+                    className="border-2 border-red-900 bg-red-200 px-2 py-1 text-[11px] font-bold text-red-900 hover:bg-red-900 hover:text-red-100 disabled:opacity-50"
+                  >
+                    全部不通过并回退
+                  </button>
+                </div>
+              )}
             </>
           )}
 
@@ -84,7 +137,7 @@ export function WorkflowRunStatusCard({
           )}
 
           <p className="font-mono text-[10px] font-bold text-muted-foreground">
-            job={view.jobId} run={view.workflowRunId || '—'}
+            job={view.jobId} run={view.workflowRunId || '-'}
           </p>
         </div>
       )}

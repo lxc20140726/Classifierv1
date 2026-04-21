@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react'
+﻿import { useEffect, useState, useRef } from 'react'
 import {
   Clock,
   FileText,
@@ -15,10 +15,10 @@ import gsap from 'gsap'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 
-import { updateWorkflowDef } from '@/api/workflowDefs'
 import { startWorkflowJob } from '@/api/workflowRuns'
 import { SnapshotDrawer } from '@/components/SnapshotDrawer'
 import { WorkflowRunStatusCard } from '@/components/WorkflowRunStatusCard'
+import { useIsMobile } from '@/hooks/useIsMobile'
 import {
   getWorkflowFolderLaunchability,
   launchWorkflowForFolder,
@@ -34,12 +34,12 @@ import type { Category, Folder, FolderStatus, Job, WorkflowGraph, WorkflowStageS
 type SortableFolderColumn = 'updated_at' | 'total_size'
 
 const CATEGORY_LABEL: Record<Category | '', string> = {
-  '': '全部分类',
-  photo: '写真',
-  video: '视频',
-  mixed: '混合',
-  manga: '漫画',
-  other: '其他',
+  '': '鍏ㄩ儴鍒嗙被',
+  photo: '鍐欑湡',
+  video: '瑙嗛',
+  mixed: '娣峰悎',
+  manga: '婕敾',
+  other: '鍏朵粬',
 }
 
 const CATEGORY_COLOR: Record<Category, string> = {
@@ -144,7 +144,8 @@ function getSortLabel(active: boolean, descending: boolean): string {
 
 interface FolderWorkflowLaunchDialogState {
   open: boolean
-  folder: Folder | null
+  folderIds: string[]
+  mode: 'all' | 'classification' | 'processing'
 }
 
 function countEnabledNodes(graphJSON: string) {
@@ -154,6 +155,46 @@ function countEnabledNodes(graphJSON: string) {
     return nodes.filter((node) => node && node.enabled !== false).length
   } catch {
     return 0
+  }
+}
+
+const CLASSIFICATION_NODE_TYPES = new Set([
+  'classification-writer',
+  'classification-db-result-preview',
+  'file-tree-classifier',
+  'name-keyword-classifier',
+  'ext-ratio-classifier',
+  'signal-aggregator',
+  'confidence-check',
+  'classification-reader',
+  'db-subtree-reader',
+])
+
+const PROCESSING_NODE_TYPES = new Set([
+  'rename-node',
+  'move-node',
+  'compress-node',
+  'thumbnail-node',
+  'processing-result-preview',
+])
+
+function workflowMatchesLaunchMode(graphJSON: string, mode: FolderWorkflowLaunchDialogState['mode']) {
+  if (mode === 'all') return true
+  try {
+    const parsed = JSON.parse(graphJSON) as Partial<WorkflowGraph>
+    const nodes = Array.isArray(parsed.nodes) ? parsed.nodes : []
+    const enabledTypes = new Set(
+      nodes
+        .filter((node) => node && node.enabled !== false)
+        .map((node) => String(node.type ?? '').trim())
+        .filter((nodeType) => nodeType !== ''),
+    )
+    if (mode === 'classification') {
+      return [...enabledTypes].some((nodeType) => CLASSIFICATION_NODE_TYPES.has(nodeType))
+    }
+    return [...enabledTypes].some((nodeType) => PROCESSING_NODE_TYPES.has(nodeType))
+  } catch {
+    return false
   }
 }
 
@@ -180,7 +221,7 @@ function ScanProgressBanner() {
     <div className="border-2 border-foreground bg-blue-100 px-4 py-3 shadow-hard mb-4">
       <div className="flex items-center gap-2 text-sm text-blue-900">
         <Loader2 className="h-5 w-5 shrink-0 animate-spin" />
-        <span className="font-black">正在扫描</span>
+        <span className="font-black">姝ｅ湪鎵弿</span>
         {scanProgress?.currentFolderName != null && (
           <span className="truncate font-mono font-bold">{scanProgress.currentFolderName}</span>
         )}
@@ -209,7 +250,7 @@ function JobItem({ job }: { job: Job }) {
     <div className="space-y-2">
       <div className="flex items-center justify-between gap-2">
         <span className="truncate text-xs font-bold">
-          {job.type === 'move' ? '移动任务' : job.type}
+          {job.type === 'move' ? '绉诲姩浠诲姟' : job.type}
         </span>
         <span className={cn('shrink-0 px-2 py-0.5 text-[10px] font-black', statusColor)}>
           {statusLabel}
@@ -224,9 +265,9 @@ function JobItem({ job }: { job: Job }) {
         </div>
       )}
       <p className="text-xs font-medium text-muted-foreground">
-        <span className="tabular-nums font-bold text-foreground">{job.done}/{job.total} 个</span>
-        {job.failed > 0 && <span className="text-red-600 font-bold"> · {job.failed} 失败</span>}
-        {job.created_at ? <span> · {formatRelativeTime(job.created_at)}</span> : null}
+        <span className="tabular-nums font-bold text-foreground">{job.done}/{job.total} 项</span>
+        {job.failed > 0 && <span className="text-red-600 font-bold"> 路 {job.failed} 澶辫触</span>}
+        {job.created_at ? <span> 路 {formatRelativeTime(job.created_at)}</span> : null}
       </p>
     </div>
   )
@@ -247,7 +288,7 @@ function RecentJobsPanel() {
         <h3 className="text-base font-black tracking-tight">最近任务</h3>
       </div>
       {jobs.length === 0 ? (
-        <p className="text-xs font-medium text-muted-foreground py-4 text-center">暂无任务记录</p>
+        <p className="text-xs font-medium text-muted-foreground py-4 text-center">鏆傛棤浠诲姟璁板綍</p>
       ) : (
         <ul className="divide-y-2 divide-foreground">
           {jobs.slice(0, 5).map((job) => (
@@ -276,7 +317,7 @@ function RecentLogsPanel() {
         <h3 className="text-base font-black tracking-tight">最近日志</h3>
       </div>
       {logs.length === 0 ? (
-        <p className="text-xs font-medium text-muted-foreground py-4 text-center">暂无操作日志</p>
+        <p className="text-xs font-medium text-muted-foreground py-4 text-center">鏆傛棤鎿嶄綔鏃ュ織</p>
       ) : (
         <ul className="divide-y-2 divide-foreground">
           {logs.slice(0, 5).map((log) => (
@@ -293,7 +334,7 @@ function RecentLogsPanel() {
                         : 'bg-gray-200 text-gray-900',
                   )}
                 >
-                  {log.result === 'success' ? '成功' : log.result === 'failed' ? '失败' : log.result}
+                  {log.result === 'success' ? '鎴愬姛' : log.result === 'failed' ? '澶辫触' : log.result}
                 </span>
               </div>
               {log.folder_path ? (
@@ -329,6 +370,7 @@ interface FolderActionProps {
   selected: boolean
   onToggleSelect: () => void
   onLaunchWorkflow: () => void
+  onOpenLiveClassification: () => void
   onOpenLineage: () => void
   onSnapshot: () => void
   onUpdateCategory: (c: Category) => void
@@ -342,6 +384,7 @@ function FolderCard({
   selected,
   onToggleSelect,
   onLaunchWorkflow,
+  onOpenLiveClassification,
   onOpenLineage,
   onSnapshot,
   onUpdateCategory,
@@ -389,21 +432,22 @@ function FolderCard({
           <span className="border-2 border-amber-900 bg-amber-200 px-2 py-0.5 text-xs font-bold text-amber-900">含其他文件</span>
         )}
         {folder.category_source === 'manual' && (
-          <span className="border-2 border-indigo-900 bg-indigo-200 px-2 py-0.5 text-xs font-bold text-indigo-900">手动</span>
+          <span className="border-2 border-indigo-900 bg-indigo-200 px-2 py-0.5 text-xs font-bold text-indigo-900">鎵嬪姩</span>
         )}
       </div>
 
+      <p className="mt-3 break-all font-mono text-[11px] font-bold text-muted-foreground">{folder.path}</p>
       <div className="mt-4 grid grid-cols-3 gap-2 text-center">
         <div className="border-2 border-foreground bg-muted/30 p-1.5">
-          <p className="text-[10px] font-bold text-muted-foreground">图片</p>
+          <p className="text-[10px] font-bold text-muted-foreground">鍥剧墖</p>
           <p className="text-sm font-black tabular-nums">{folder.image_count}</p>
         </div>
         <div className="border-2 border-foreground bg-muted/30 p-1.5">
-          <p className="text-[10px] font-bold text-muted-foreground">视频</p>
+          <p className="text-[10px] font-bold text-muted-foreground">瑙嗛</p>
           <p className="text-sm font-black tabular-nums">{folder.video_count}</p>
         </div>
         <div className="border-2 border-foreground bg-muted/30 p-1.5">
-          <p className="text-[10px] font-bold text-muted-foreground">大小</p>
+          <p className="text-[10px] font-bold text-muted-foreground">澶у皬</p>
           <p className="text-sm font-black">{formatBytes(folder.total_size)}</p>
         </div>
       </div>
@@ -413,31 +457,37 @@ function FolderCard({
           <button
             type="button"
             onClick={onRestore}
-            className="flex-1 border-2 border-foreground bg-background px-2 py-1.5 text-xs font-bold transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5"
+            className="w-full border-2 border-foreground bg-background px-2 py-1.5 text-xs font-bold transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5 sm:w-auto sm:min-w-28"
           >
-            恢复扫描
+            鎭㈠鎵弿
           </button>
         ) : (
           <>
             <button
               type="button"
               onClick={onLaunchWorkflow}
-              className="flex-1 border-2 border-foreground bg-green-300 px-2 py-1.5 text-xs font-bold text-green-900 transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5"
+              className="w-full border-2 border-foreground bg-green-300 px-2 py-1.5 text-xs font-bold text-green-900 transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5 sm:w-auto sm:min-w-28"
             >
-              启动工作流
+              鍚姩宸ヤ綔娴?            </button>
+            <button
+              type="button"
+              onClick={onOpenLiveClassification}
+              className="w-full border-2 border-foreground bg-background px-2 py-1.5 text-xs font-bold transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5 sm:w-auto"
+            >
+              瀹炴椂鍒嗙被
             </button>
             <button
               type="button"
               onClick={onOpenLineage}
-              className="border-2 border-foreground bg-background px-2 py-1.5 text-xs font-bold transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5"
+              className="w-full border-2 border-foreground bg-background px-2 py-1.5 text-xs font-bold transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5 sm:w-auto"
             >
-              路径关系
+              璺緞鍏崇郴
             </button>
             <select
               value={folder.category}
               onChange={(e) => onUpdateCategory(e.target.value as Category)}
-              className="flex-1 border-2 border-foreground bg-background px-2 py-1.5 text-xs font-bold outline-none focus:ring-2 focus:ring-foreground focus:ring-offset-1"
-              aria-label="更改分类"
+              className="w-full min-w-0 border-2 border-foreground bg-background px-2 py-1.5 text-xs font-bold outline-none focus:ring-2 focus:ring-foreground focus:ring-offset-1 sm:w-auto sm:flex-1 sm:min-w-[9rem]"
+              aria-label="鏇存敼鍒嗙被"
             >
               {(['photo', 'video', 'mixed', 'manga', 'other'] as Category[]).map((c) => (
                 <option key={c} value={c}>{CATEGORY_LABEL[c]}</option>
@@ -446,7 +496,7 @@ function FolderCard({
             <select
               value={folder.status}
               onChange={(e) => onUpdateStatus(e.target.value as FolderStatus)}
-              className="flex-1 border-2 border-foreground bg-background px-2 py-1.5 text-xs font-bold outline-none focus:ring-2 focus:ring-foreground focus:ring-offset-1"
+              className="w-full min-w-0 border-2 border-foreground bg-background px-2 py-1.5 text-xs font-bold outline-none focus:ring-2 focus:ring-foreground focus:ring-offset-1 sm:w-auto sm:flex-1 sm:min-w-[9rem]"
               aria-label="更改状态"
             >
               {(['pending', 'done', 'skip'] as FolderStatus[]).map((s) => (
@@ -457,15 +507,15 @@ function FolderCard({
               type="button"
               onClick={onSnapshot}
               title="查看快照时间线"
-              className="border-2 border-foreground bg-background p-1.5 transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5"
+              className="inline-flex h-8 w-8 items-center justify-center border-2 border-foreground bg-background p-1.5 transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5"
             >
               <History className="h-4 w-4" />
             </button>
             <button
               type="button"
               onClick={onRemove}
-              title="从软件中隐藏，不改动实际文件"
-              className="border-2 border-red-900 bg-red-100 p-1.5 text-red-900 transition-all hover:bg-red-900 hover:text-red-100 hover:shadow-hard hover:-translate-y-0.5"
+              title="浠庤蒋浠朵腑闅愯棌锛屼笉鏀瑰姩瀹為檯鏂囦欢"
+              className="inline-flex h-8 w-8 items-center justify-center border-2 border-red-900 bg-red-100 p-1.5 text-red-900 transition-all hover:bg-red-900 hover:text-red-100 hover:shadow-hard hover:-translate-y-0.5"
             >
               <X className="h-4 w-4" />
             </button>
@@ -481,6 +531,7 @@ function FolderRow({
   selected,
   onToggleSelect,
   onLaunchWorkflow,
+  onOpenLiveClassification,
   onOpenLineage,
   onSnapshot,
   onUpdateCategory,
@@ -493,7 +544,7 @@ function FolderRow({
 
   useEffect(() => {
     if (dotRef.current) {
-      // 粒子飞入成为列表圆点的动效
+      // 绮掑瓙椋炲叆鎴愪负鍒楄〃鍦嗙偣鐨勫姩鏁?
       gsap.fromTo(dotRef.current, 
         { 
           scale: 0,
@@ -532,7 +583,7 @@ function FolderRow({
       <td className="px-4 py-4">
         <div className="flex items-center gap-3">
           <div ref={dotRef} className="h-2.5 w-2.5 rounded-full bg-foreground shrink-0 shadow-[2px_2px_0px_rgba(0,0,0,0.2)]" />
-          <span className="max-w-xs truncate text-sm font-black tracking-tight" title={folder.name}>
+          <span className="max-w-[18rem] break-all text-sm font-black tracking-tight" title={folder.name}>
             {folder.name}
           </span>
         </div>
@@ -552,9 +603,9 @@ function FolderRow({
         </div>
       </td>
       <td className="hidden px-4 py-4 text-xs font-bold text-muted-foreground sm:table-cell">
-        <span className="tabular-nums text-foreground">{folder.image_count}</span> 图
-        <span className="mx-2">·</span>
-        <span className="tabular-nums text-foreground">{folder.video_count}</span> 视
+        <span className="tabular-nums text-foreground">{folder.image_count}</span> 鍥?
+        <span className="mx-2">路</span>
+        <span className="tabular-nums text-foreground">{folder.video_count}</span> 瑙?
       </td>
       <td className="hidden px-4 py-4 text-xs font-mono font-bold text-foreground md:table-cell">
         {formatBytes(folder.total_size)}
@@ -564,14 +615,14 @@ function FolderRow({
         <div className="mt-1">{formatRelativeTime(folder.updated_at)}</div>
       </td>
       <td className="px-4 py-4">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {isDeleted ? (
             <button
               type="button"
               onClick={onRestore}
               className="border-2 border-foreground bg-background px-3 py-1.5 text-xs font-bold transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5"
             >
-              恢复扫描
+              鎭㈠鎵弿
             </button>
           ) : (
             <>
@@ -580,7 +631,13 @@ function FolderRow({
                 onClick={onLaunchWorkflow}
                 className="border-2 border-foreground bg-green-300 px-3 py-1.5 text-xs font-bold text-green-900 transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5"
               >
-                启动工作流
+                鍚姩宸ヤ綔娴?              </button>
+              <button
+                type="button"
+                onClick={onOpenLiveClassification}
+                className="border-2 border-foreground bg-background px-3 py-1.5 text-xs font-bold transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5"
+              >
+                瀹炴椂鍒嗙被
               </button>
               <button
                 type="button"
@@ -588,13 +645,13 @@ function FolderRow({
                 className="inline-flex items-center gap-1 border-2 border-foreground bg-background px-2 py-1.5 text-xs font-bold transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5"
               >
                 <Link2 className="h-3.5 w-3.5" />
-                路径关系
+                璺緞鍏崇郴
               </button>
               <select
                 value={folder.category}
                 onChange={(e) => onUpdateCategory(e.target.value as Category)}
-                className="border-2 border-foreground bg-background px-2 py-1.5 text-xs font-bold outline-none focus:ring-2 focus:ring-foreground focus:ring-offset-1"
-                aria-label="更改分类"
+                className="min-w-[8rem] border-2 border-foreground bg-background px-2 py-1.5 text-xs font-bold outline-none focus:ring-2 focus:ring-foreground focus:ring-offset-1"
+                aria-label="鏇存敼鍒嗙被"
               >
                 {(['photo', 'video', 'mixed', 'manga', 'other'] as Category[]).map((c) => (
                   <option key={c} value={c}>{CATEGORY_LABEL[c]}</option>
@@ -603,7 +660,7 @@ function FolderRow({
               <select
                 value={folder.status}
                 onChange={(e) => onUpdateStatus(e.target.value as FolderStatus)}
-                className="border-2 border-foreground bg-background px-2 py-1.5 text-xs font-bold outline-none focus:ring-2 focus:ring-foreground focus:ring-offset-1"
+                className="min-w-[7rem] border-2 border-foreground bg-background px-2 py-1.5 text-xs font-bold outline-none focus:ring-2 focus:ring-foreground focus:ring-offset-1"
                 aria-label="更改状态"
               >
                 {(['pending', 'done', 'skip'] as FolderStatus[]).map((s) => (
@@ -614,15 +671,15 @@ function FolderRow({
                 type="button"
                 onClick={onSnapshot}
                 title="查看快照时间线"
-                className="border-2 border-foreground bg-background p-1.5 transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5"
+                className="inline-flex h-8 w-8 items-center justify-center border-2 border-foreground bg-background p-1.5 transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5"
               >
                 <History className="h-4 w-4" />
               </button>
               <button
                 type="button"
                 onClick={onRemove}
-                title="从软件中隐藏，不改动实际文件"
-                className="border-2 border-red-900 bg-red-100 p-1.5 text-red-900 transition-all hover:bg-red-900 hover:text-red-100 hover:shadow-hard hover:-translate-y-0.5"
+                title="浠庤蒋浠朵腑闅愯棌锛屼笉鏀瑰姩瀹為檯鏂囦欢"
+                className="inline-flex h-8 w-8 items-center justify-center border-2 border-red-900 bg-red-100 p-1.5 text-red-900 transition-all hover:bg-red-900 hover:text-red-100 hover:shadow-hard hover:-translate-y-0.5"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -636,6 +693,7 @@ function FolderRow({
 
 export default function FolderListPage() {
   const navigate = useNavigate()
+  const isMobile = useIsMobile(1024)
   const folders = useFolderStore((s) => s.folders)
   const total = useFolderStore((s) => s.total)
   const page = useFolderStore((s) => s.page)
@@ -660,20 +718,27 @@ export default function FolderListPage() {
   const workflowDefsError = useWorkflowDefStore((s) => s.error)
   const fetchWorkflowDefs = useWorkflowDefStore((s) => s.fetchDefs)
   const bindLatestLaunch = useWorkflowRunStore((s) => s.bindLatestLaunch)
+  const bindLatestLaunchForFolders = useWorkflowRunStore((s) => s.bindLatestLaunchForFolders)
   const restoreLatestLaunch = useWorkflowRunStore((s) => s.restoreLatestLaunch)
   const buildRunCardView = useWorkflowRunStore((s) => s.buildRunCardView)
+  const approveAllPendingReviews = useWorkflowRunStore((s) => s.approveAllPendingReviews)
+  const rollbackAllPendingReviews = useWorkflowRunStore((s) => s.rollbackAllPendingReviews)
+  const jobs = useJobStore((s) => s.jobs)
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [activeFolderId, setActiveFolderId] = useState<string | null>(null)
   const [launchDialog, setLaunchDialog] = useState<FolderWorkflowLaunchDialogState>({
     open: false,
-    folder: null,
+    folderIds: [],
+    mode: 'all',
   })
   const [selectedWorkflowDefId, setSelectedWorkflowDefId] = useState('')
   const [launchError, setLaunchError] = useState<string | null>(null)
   const [launchSuccessJobId, setLaunchSuccessJobId] = useState<string | null>(null)
   const [isLaunching, setIsLaunching] = useState(false)
+  const [isHandlingReviewShortcut, setIsHandlingReviewShortcut] = useState(false)
   const previousListKeyRef = useRef<string>('')
+  const effectiveViewMode = isMobile ? 'grid' : viewMode
 
   useEffect(() => {
     void fetchFolders()
@@ -685,14 +750,14 @@ export default function FolderListPage() {
     const listShapeChanged = previousListKeyRef.current !== listKey
     previousListKeyRef.current = listKey
     if (!isLoading && folders.length > 0 && listShapeChanged) {
-      const selector = viewMode === 'grid' ? '.folder-card' : '.folder-row'
+      const selector = effectiveViewMode === 'grid' ? '.folder-card' : '.folder-row'
       gsap.fromTo(
         selector,
         { opacity: 0, x: -20 },
         { opacity: 1, x: 0, duration: 0.4, stagger: 0.05, ease: 'power2.out', clearProps: 'all' }
       )
     }
-  }, [folders, viewMode, isLoading])
+  }, [folders, effectiveViewMode, isLoading])
 
   const totalPages = Math.max(1, Math.ceil(total / limit))
   const currentSortBy = filters.sortBy ?? 'updated_at'
@@ -723,7 +788,18 @@ export default function FolderListPage() {
   }
 
   function openLaunchDialog(folder: Folder) {
-    setLaunchDialog({ open: true, folder })
+    setLaunchDialog({ open: true, folderIds: [folder.id], mode: 'all' })
+    setLaunchError(null)
+    setLaunchSuccessJobId(null)
+    setIsLaunching(false)
+    setSelectedWorkflowDefId('')
+    void fetchWorkflowDefs()
+  }
+
+  function openBatchLaunchDialog(mode: FolderWorkflowLaunchDialogState['mode']) {
+    const selectedFolderIDs = [...selectedIds]
+    if (selectedFolderIDs.length === 0) return
+    setLaunchDialog({ open: true, folderIds: selectedFolderIDs, mode })
     setLaunchError(null)
     setLaunchSuccessJobId(null)
     setIsLaunching(false)
@@ -732,17 +808,19 @@ export default function FolderListPage() {
   }
 
   function closeLaunchDialog() {
-    setLaunchDialog({ open: false, folder: null })
+    setLaunchDialog({ open: false, folderIds: [], mode: 'all' })
     setSelectedWorkflowDefId('')
     setLaunchError(null)
     setLaunchSuccessJobId(null)
     setIsLaunching(false)
   }
 
-  const workflowLaunchEntries = workflowDefs.map((def) => ({
+  const workflowLaunchEntries = workflowDefs
+    .filter((def) => workflowMatchesLaunchMode(def.graph_json, launchDialog.mode))
+    .map((def) => ({
     def,
     launchability: getWorkflowFolderLaunchability(def.graph_json),
-  }))
+    }))
   const launchableWorkflowCount = workflowLaunchEntries.filter((entry) => entry.launchability.canLaunch).length
   const selectedWorkflowEntry = workflowLaunchEntries.find((entry) => entry.def.id === selectedWorkflowDefId) ?? null
   const selectedWorkflowDef = selectedWorkflowEntry?.def ?? null
@@ -759,11 +837,12 @@ export default function FolderListPage() {
 
   useEffect(() => {
     if (!launchDialog.open || selectedWorkflowDefId.trim() === '') return
-    void restoreLatestLaunch(selectedWorkflowDefId, launchDialog.folder?.id)
-  }, [launchDialog.folder?.id, launchDialog.open, restoreLatestLaunch, selectedWorkflowDefId])
+    if (launchDialog.folderIds.length !== 1) return
+    void restoreLatestLaunch(selectedWorkflowDefId, launchDialog.folderIds[0])
+  }, [launchDialog.folderIds, launchDialog.open, restoreLatestLaunch, selectedWorkflowDefId])
 
   async function handleLaunchWorkflow() {
-    if (!launchDialog.folder) return
+    if (launchDialog.folderIds.length === 0) return
     if (!selectedWorkflowDef) {
       setLaunchError('请选择一个工作流')
       return
@@ -775,22 +854,21 @@ export default function FolderListPage() {
     try {
       const result = await launchWorkflowForFolder({
         workflowDef: selectedWorkflowDef,
-        folderId: launchDialog.folder.id,
-        updateWorkflowGraph: async (workflowDefId, graphJson) => {
-          await updateWorkflowDef(workflowDefId, { graph_json: graphJson })
-        },
-        startWorkflow: async (workflowDefId) => {
-          const res = await startWorkflowJob({ workflow_def_id: workflowDefId })
+        folderIds: launchDialog.folderIds,
+        startWorkflow: async (workflowDefId, folderIds) => {
+          const res = await startWorkflowJob({ workflow_def_id: workflowDefId, folder_ids: folderIds })
           return res.job_id
         },
         bindLatestLaunch,
       })
+      if (result.folderIds.length > 1) {
+        void bindLatestLaunchForFolders(selectedWorkflowDef.id, result.jobId, result.folderIds)
+      }
       startJobPolling(result.jobId, {
         jobType: 'workflow',
-        folderIds: [launchDialog.folder.id],
+        folderIds: result.folderIds,
       })
       setLaunchSuccessJobId(result.jobId)
-      await fetchWorkflowDefs()
     } catch (err) {
       setLaunchError(err instanceof Error ? err.message : '启动失败')
     } finally {
@@ -798,17 +876,48 @@ export default function FolderListPage() {
     }
   }
 
-  const launchCardView = selectedWorkflowDef
+  const launchCardView = selectedWorkflowDef && launchDialog.folderIds.length === 1
     ? buildRunCardView(
       selectedWorkflowDef.id,
       countEnabledNodes(selectedWorkflowDef.graph_json),
-      launchDialog.folder?.id,
+      launchDialog.folderIds[0],
     )
     : null
 
+  const launchBatchJob = launchSuccessJobId
+    ? jobs.find((job) => job.id === launchSuccessJobId) ?? null
+    : null
+
+  async function handleApproveAllFromCard() {
+    if (!launchCardView?.workflowRunId || launchCardView.pendingReviewCount <= 0) return
+    setIsHandlingReviewShortcut(true)
+    try {
+      await approveAllPendingReviews(launchCardView.workflowRunId)
+    } finally {
+      setIsHandlingReviewShortcut(false)
+    }
+  }
+
+  async function handleRollbackAllFromCard() {
+    if (!launchCardView?.workflowRunId || launchCardView.pendingReviewCount <= 0) return
+    setIsHandlingReviewShortcut(true)
+    try {
+      await rollbackAllPendingReviews(launchCardView.workflowRunId)
+    } finally {
+      setIsHandlingReviewShortcut(false)
+    }
+  }
+
+  const launchSelectedFolders = folders.filter((folder) => launchDialog.folderIds.includes(folder.id))
+  const launchModeLabel = launchDialog.mode === 'classification'
+    ? '批量分类'
+    : launchDialog.mode === 'processing'
+      ? '批量处理'
+      : '启动工作流'
+
   return (
     <>
-      <div className="mb-6 flex flex-wrap items-end justify-between gap-4 border-b-2 border-foreground pb-4">
+      <div className="mb-6 flex flex-col gap-4 border-b-2 border-foreground pb-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <h1 className="text-3xl font-black tracking-tight uppercase">媒体文件夹</h1>
           <p className="mt-1 text-sm font-bold text-muted-foreground">
@@ -816,20 +925,12 @@ export default function FolderListPage() {
             {selectedIds.size > 0 && <span className="ml-2 text-primary">· 已选 {selectedIds.size} 个</span>}
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={() => navigate('/live-classification')}
-            className="flex items-center gap-2 border-2 border-foreground bg-background px-4 py-2 text-sm font-bold transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5"
-          >
-            <Link2 className="h-4 w-4" />
-            实时分类
-          </button>
+        <div className="flex w-full flex-wrap items-center gap-2 sm:gap-3 lg:w-auto lg:justify-end">
           <button
             type="button"
             onClick={() => void triggerScan()}
             disabled={isScanning}
-            className="flex items-center gap-2 border-2 border-foreground bg-background px-4 py-2 text-sm font-bold transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5 disabled:opacity-50 disabled:hover:bg-background disabled:hover:text-foreground disabled:hover:shadow-none disabled:hover:translate-y-0"
+            className="inline-flex min-w-0 items-center gap-2 border-2 border-foreground bg-background px-3 py-2 text-sm font-bold transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5 disabled:opacity-50 disabled:hover:bg-background disabled:hover:text-foreground disabled:hover:shadow-none disabled:hover:translate-y-0 sm:px-4"
           >
             {isScanning ? (
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -838,7 +939,32 @@ export default function FolderListPage() {
             )}
             {isScanning ? '扫描中' : '扫描'}
           </button>
-          <div className="flex border-2 border-foreground bg-background shadow-hard">
+          {selectedIds.size > 0 && (
+            <>
+              <button
+                type="button"
+                onClick={() => openBatchLaunchDialog('classification')}
+                className="inline-flex min-w-0 items-center gap-2 border-2 border-foreground bg-blue-200 px-3 py-2 text-sm font-bold text-blue-900 transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5 sm:px-4"
+              >
+                批量分类
+              </button>
+              <button
+                type="button"
+                onClick={() => openBatchLaunchDialog('processing')}
+                className="inline-flex min-w-0 items-center gap-2 border-2 border-foreground bg-green-200 px-3 py-2 text-sm font-bold text-green-900 transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5 sm:px-4"
+              >
+                批量处理
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedIds(new Set())}
+                className="inline-flex min-w-0 items-center gap-2 border-2 border-foreground bg-background px-3 py-2 text-sm font-bold transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5 sm:px-4"
+              >
+                清空选择
+              </button>
+            </>
+          )}
+          <div className="hidden border-2 border-foreground bg-background shadow-hard lg:flex">
             <button
               type="button"
               onClick={() => setViewMode('grid')}
@@ -846,7 +972,7 @@ export default function FolderListPage() {
                 'px-3 py-2 text-sm transition-colors',
                 viewMode === 'grid' ? 'bg-foreground text-background' : 'hover:bg-muted',
               )}
-              title="网格视图"
+              title="缃戞牸瑙嗗浘"
             >
               <Grid2X2 className="h-4 w-4" />
             </button>
@@ -858,7 +984,7 @@ export default function FolderListPage() {
                 'px-3 py-2 text-sm transition-colors',
                 viewMode === 'list' ? 'bg-foreground text-background' : 'hover:bg-muted',
               )}
-              title="列表视图"
+              title="鍒楄〃瑙嗗浘"
             >
               <List className="h-4 w-4" />
             </button>
@@ -868,7 +994,7 @@ export default function FolderListPage() {
 
       <ScanProgressBanner />
 
-      <div className="mb-6 flex flex-wrap gap-3">
+      <div className="mb-6 flex flex-wrap gap-2 sm:gap-3">
         {ALL_CATEGORIES.map((c) => (
           <button
             key={c}
@@ -884,7 +1010,7 @@ export default function FolderListPage() {
             {CATEGORY_LABEL[c]}
           </button>
         ))}
-        <div className="mx-2 w-0.5 bg-foreground" />
+        <div className="hidden h-6 w-0.5 self-center bg-foreground md:block" />
         {ALL_STATUSES.map((s) => (
           <button
             key={s}
@@ -900,7 +1026,7 @@ export default function FolderListPage() {
             {STATUS_LABEL[s]}
           </button>
         ))}
-        <div className="mx-2 w-0.5 bg-foreground" />
+        <div className="hidden h-6 w-0.5 self-center bg-foreground md:block" />
         <button
           type="button"
           onClick={() => { setPage(1); setFilters({ onlyDeleted: filters.onlyDeleted ? undefined : true }) }}
@@ -911,9 +1037,9 @@ export default function FolderListPage() {
               : 'border-foreground bg-background text-foreground',
           )}
         >
-          已隐藏
+          宸查殣钘?
         </button>
-        <div className="mx-2 w-0.5 bg-foreground" />
+        <div className="hidden h-6 w-0.5 self-center bg-foreground md:block" />
         <button
           type="button"
           onClick={() => { setPage(1); setFilters({ ...filters, topLevelOnly: filters.topLevelOnly === false ? true : false }) }}
@@ -926,7 +1052,7 @@ export default function FolderListPage() {
         >
           {(filters.topLevelOnly ?? true) ? '仅一级目录' : '显示全部层级'}
         </button>
-        <div className="mx-2 w-0.5 bg-foreground" />
+        <div className="hidden h-6 w-0.5 self-center bg-foreground md:block" />
         <button
           type="button"
           onClick={() => setSort('updated_at')}
@@ -937,7 +1063,7 @@ export default function FolderListPage() {
               : 'border-foreground bg-background text-foreground',
           )}
         >
-          修改时间 {getSortLabel(currentSortBy === 'updated_at', currentSortOrder === 'desc')}
+          淇敼鏃堕棿 {getSortLabel(currentSortBy === 'updated_at', currentSortOrder === 'desc')}
         </button>
         <button
           type="button"
@@ -949,7 +1075,7 @@ export default function FolderListPage() {
               : 'border-foreground bg-background text-foreground',
           )}
         >
-          大小 {getSortLabel(currentSortBy === 'total_size', currentSortOrder === 'desc')}
+          澶у皬 {getSortLabel(currentSortBy === 'total_size', currentSortOrder === 'desc')}
         </button>
       </div>
 
@@ -968,9 +1094,9 @@ export default function FolderListPage() {
           ) : folders.length === 0 ? (
             <div className="flex flex-col items-center justify-center border-2 border-dashed border-foreground py-32 text-muted-foreground">
               <FolderOpen className="h-12 w-12 opacity-50" />
-              <p className="mt-4 text-sm font-bold">暂无文件夹，请先扫描</p>
+              <p className="mt-4 text-sm font-bold">鏆傛棤鏂囦欢澶癸紝璇峰厛鎵弿</p>
             </div>
-          ) : viewMode === 'grid' ? (
+          ) : effectiveViewMode === 'grid' ? (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {folders.map((folder) => (
                 <FolderCard
@@ -979,6 +1105,7 @@ export default function FolderListPage() {
                   selected={selectedIds.has(folder.id)}
                   onToggleSelect={() => toggleSelect(folder.id)}
                   onLaunchWorkflow={() => openLaunchDialog(folder)}
+                  onOpenLiveClassification={() => navigate(`/folders/${folder.id}/live-classification`)}
                   onOpenLineage={() => navigate(`/folders/${folder.id}/lineage`)}
                   onSnapshot={() => setActiveFolderId(folder.id)}
                   onUpdateCategory={(c) => void updateFolderCategory(folder.id, c)}
@@ -989,8 +1116,8 @@ export default function FolderListPage() {
               ))}
             </div>
           ) : (
-            <div className="overflow-x-auto border-2 border-foreground bg-card shadow-hard">
-              <table className="w-full text-sm">
+            <div className="overflow-hidden border-2 border-foreground bg-card shadow-hard">
+              <table className="table-fixed w-full min-w-0 text-sm">
                 <thead>
                   <tr className="border-b-2 border-foreground bg-muted/50">
                     <th className="w-12 px-4 py-4">
@@ -1002,7 +1129,7 @@ export default function FolderListPage() {
                         aria-label="全选"
                       />
                     </th>
-                    <th className="px-4 py-4 text-left font-black tracking-widest">名称</th>
+                    <th className="px-4 py-4 text-left font-black tracking-widest">鍚嶇О</th>
                     <th className="px-4 py-4 text-left font-black tracking-widest">分类 / 状态</th>
                     <th className="hidden px-4 py-4 text-left font-black tracking-widest sm:table-cell">文件数</th>
                     <th className="hidden px-4 py-4 text-left font-black tracking-widest md:table-cell">
@@ -1011,7 +1138,7 @@ export default function FolderListPage() {
                         onClick={() => setSort('total_size')}
                         className="inline-flex items-center gap-1 transition-colors hover:text-foreground/70"
                       >
-                        <span>大小</span>
+                        <span>澶у皬</span>
                         <span>{getSortLabel(currentSortBy === 'total_size', currentSortOrder === 'desc')}</span>
                       </button>
                     </th>
@@ -1021,11 +1148,11 @@ export default function FolderListPage() {
                         onClick={() => setSort('updated_at')}
                         className="inline-flex items-center gap-1 transition-colors hover:text-foreground/70"
                       >
-                        <span>修改时间</span>
+                        <span>淇敼鏃堕棿</span>
                         <span>{getSortLabel(currentSortBy === 'updated_at', currentSortOrder === 'desc')}</span>
                       </button>
                     </th>
-                    <th className="px-4 py-4 text-left font-black tracking-widest">操作</th>
+                    <th className="px-4 py-4 text-left font-black tracking-widest">鎿嶄綔</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1036,6 +1163,7 @@ export default function FolderListPage() {
                       selected={selectedIds.has(folder.id)}
                       onToggleSelect={() => toggleSelect(folder.id)}
                       onLaunchWorkflow={() => openLaunchDialog(folder)}
+                      onOpenLiveClassification={() => navigate(`/folders/${folder.id}/live-classification`)}
                       onOpenLineage={() => navigate(`/folders/${folder.id}/lineage`)}
                       onSnapshot={() => setActiveFolderId(folder.id)}
                       onUpdateCategory={(c) => void updateFolderCategory(folder.id, c)}
@@ -1050,16 +1178,16 @@ export default function FolderListPage() {
           )}
 
           {totalPages > 1 && (
-            <div className="mt-8 flex items-center justify-center gap-4">
+            <div className="mt-8 flex flex-wrap items-center justify-center gap-3 sm:gap-4">
               <button
                 type="button"
                 disabled={page <= 1}
                 onClick={() => setPage(page - 1)}
                 className="border-2 border-foreground bg-background px-4 py-2 text-sm font-bold transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5 disabled:opacity-40 disabled:hover:bg-background disabled:hover:text-foreground disabled:hover:shadow-none disabled:hover:translate-y-0"
               >
-                上一页
+                涓婁竴椤?
               </button>
-              <span className="text-sm font-black font-mono">
+              <span className="min-w-[4rem] text-center text-sm font-black font-mono">
                 {page} / {totalPages}
               </span>
               <button
@@ -1068,27 +1196,21 @@ export default function FolderListPage() {
                 onClick={() => setPage(page + 1)}
                 className="border-2 border-foreground bg-background px-4 py-2 text-sm font-bold transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5 disabled:opacity-40 disabled:hover:bg-background disabled:hover:text-foreground disabled:hover:shadow-none disabled:hover:translate-y-0"
               >
-                下一页
+                涓嬩竴椤?
               </button>
             </div>
           )}
         </div>
-
-        <div className="flex w-full flex-col gap-6 xl:w-80 xl:shrink-0">
-          <RecentJobsPanel />
-          <RecentLogsPanel />
-        </div>
-      </div>
-
-      {launchDialog.open && launchDialog.folder && typeof document !== 'undefined' && createPortal(
+      {launchDialog.open && launchDialog.folderIds.length > 0 && typeof document !== 'undefined' && createPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="w-full max-w-3xl border-2 border-foreground bg-background p-6 shadow-hard-lg">
-            <h2 className="mb-2 text-xl font-black tracking-tight">启动工作流</h2>
+          <div className="max-h-[calc(100dvh-2rem)] w-full max-w-3xl overflow-y-auto border-2 border-foreground bg-background p-4 shadow-hard-lg sm:p-6">
+            <h2 className="mb-2 text-xl font-black tracking-tight">{launchModeLabel}</h2>
             <p className="mb-1 text-sm font-bold text-muted-foreground">
-              当前文件夹：{launchDialog.folder.name}
+              已选择 {launchDialog.folderIds.length} 个文件夹
             </p>
-            <p className="mb-4 truncate font-mono text-xs font-bold text-muted-foreground">
-              {launchDialog.folder.path}
+            <p className="mb-4 truncate font-mono text-xs font-bold text-muted-foreground" title={launchSelectedFolders.map((folder) => folder.name).join('，')}>
+              {launchSelectedFolders.slice(0, 3).map((folder) => folder.name).join('，')}
+              {launchSelectedFolders.length > 3 ? ` +${launchSelectedFolders.length - 3}` : ''}
             </p>
 
             <div className="space-y-3">
@@ -1099,7 +1221,7 @@ export default function FolderListPage() {
                 ) : workflowDefsError ? (
                   <p className="py-8 text-center text-xs font-bold text-red-700">{workflowDefsError}</p>
                 ) : workflowLaunchEntries.length === 0 ? (
-                  <p className="py-8 text-center text-xs font-bold text-muted-foreground">暂无工作流定义</p>
+                  <p className="py-8 text-center text-xs font-bold text-muted-foreground">当前入口没有可用工作流</p>
                 ) : (
                   workflowLaunchEntries.map(({ def, launchability }) => {
                     const disabled = !launchability.canLaunch
@@ -1126,12 +1248,7 @@ export default function FolderListPage() {
                           <span className="truncate text-sm font-black">{def.name}</span>
                           <span className="shrink-0 font-mono text-xs font-bold">v{def.version}</span>
                         </div>
-                        <p
-                          className={cn(
-                            'mt-2 text-xs font-bold',
-                            selected ? 'text-background/90' : 'text-muted-foreground',
-                          )}
-                        >
+                        <p className={cn('mt-2 text-xs font-bold', selected ? 'text-background/90' : 'text-muted-foreground')}>
                           {launchability.canLaunch
                             ? `可快捷启动（${launchability.enabledPickerCount} 个 folder-picker）`
                             : (launchability.error ?? '该工作流暂不可快捷启动')}
@@ -1143,18 +1260,6 @@ export default function FolderListPage() {
               </div>
             </div>
 
-            {!workflowDefsLoading && !workflowDefsError && launchableWorkflowCount === 0 && (
-              <p className="mt-4 border-2 border-amber-900 bg-amber-100 px-4 py-3 text-sm font-bold text-amber-900">
-                暂无可快捷启动的工作流
-              </p>
-            )}
-
-            {selectedWorkflowLaunchability?.canLaunch === false && (
-              <p className="mt-4 border-2 border-amber-900 bg-amber-100 px-4 py-3 text-sm font-bold text-amber-900">
-                {selectedWorkflowLaunchability.error ?? '该工作流暂不可快捷启动'}
-              </p>
-            )}
-
             {launchError && (
               <p className="mt-4 border-2 border-red-900 bg-red-100 px-4 py-3 text-sm font-bold text-red-900 shadow-hard">
                 {launchError}
@@ -1163,7 +1268,16 @@ export default function FolderListPage() {
 
             {launchSuccessJobId && (
               <div className="mt-4 border-2 border-green-900 bg-green-100 px-4 py-3 text-sm font-bold text-green-900 shadow-hard">
-                启动成功，作业 ID：{launchSuccessJobId}
+                启动成功，任务 ID：{launchSuccessJobId}
+              </div>
+            )}
+
+            {launchBatchJob && launchDialog.folderIds.length > 1 && (
+              <div className="mt-4 border-2 border-foreground bg-muted/10 px-4 py-3 text-sm font-bold">
+                <p>批量进度：{launchBatchJob.done} / {launchBatchJob.total}，失败 {launchBatchJob.failed}</p>
+                {launchBatchJob.status === 'waiting_input' && (
+                  <p className="mt-1 text-xs text-amber-700">存在待确认项，请前往任务历史批量确认。</p>
+                )}
               </div>
             )}
 
@@ -1173,28 +1287,31 @@ export default function FolderListPage() {
                   view={launchCardView}
                   title="最近一次运行状态"
                   onOpenJobs={() => navigate(buildJobHistoryLink(launchCardView.jobId, launchCardView.workflowRunId))}
+                  onApproveAllPending={() => void handleApproveAllFromCard()}
+                  onRollbackAllPending={() => void handleRollbackAllFromCard()}
+                  actionLoading={isHandlingReviewShortcut}
                 />
               </div>
             )}
 
-            <div className="mt-8 flex items-center justify-between gap-3">
+            <div className="mt-8 flex flex-wrap items-center justify-between gap-3">
               <button
                 type="button"
                 onClick={closeLaunchDialog}
                 disabled={isLaunching}
-                className="border-2 border-foreground bg-background px-6 py-2.5 text-sm font-bold transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5 disabled:opacity-50 disabled:hover:bg-background disabled:hover:text-foreground disabled:hover:shadow-none disabled:hover:translate-y-0"
+                className="border-2 border-foreground bg-background px-6 py-2.5 text-sm font-bold transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5 disabled:opacity-50"
               >
                 关闭
               </button>
 
-              <div className="flex items-center gap-3">
+              <div className="flex w-full flex-wrap items-center justify-end gap-3 sm:w-auto">
                 {launchSuccessJobId && (
                   <button
                     type="button"
                     onClick={() => navigate(buildJobHistoryLink(launchSuccessJobId, launchCardView?.workflowRunId))}
                     className="border-2 border-foreground bg-primary px-4 py-2.5 text-sm font-bold text-primary-foreground transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5"
                   >
-                    查看作业
+                    查看任务
                   </button>
                 )}
                 <button
@@ -1202,11 +1319,11 @@ export default function FolderListPage() {
                   onClick={() => void handleLaunchWorkflow()}
                   disabled={
                     isLaunching
-                    || !launchDialog.folder
+                    || launchDialog.folderIds.length === 0
                     || !selectedWorkflowDef
                     || selectedWorkflowLaunchability?.canLaunch !== true
                   }
-                  className="inline-flex items-center gap-2 border-2 border-foreground bg-green-300 px-6 py-2.5 text-sm font-bold text-green-900 transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-green-300 disabled:hover:text-green-900 disabled:hover:shadow-none disabled:hover:translate-y-0"
+                  className="inline-flex items-center gap-2 border-2 border-foreground bg-green-300 px-6 py-2.5 text-sm font-bold text-green-900 transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {isLaunching && <Loader2 className="h-4 w-4 animate-spin" />}
                   {isLaunching ? '启动中...' : '确认启动'}
@@ -1215,7 +1332,7 @@ export default function FolderListPage() {
             </div>
           </div>
         </div>,
-        document.body,
+        document.body
       )}
 
       <SnapshotDrawer

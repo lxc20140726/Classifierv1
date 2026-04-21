@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ChevronRight, Clock3, FolderTree, Loader2 } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
@@ -8,7 +8,6 @@ import type {
   Category,
   ClassificationFileKind,
   FolderClassificationTreeEntry,
-  LiveClassificationItem,
   LiveClassificationStatus,
 } from '@/types'
 
@@ -51,13 +50,13 @@ function FileKindBadge({ kind }: { kind: ClassificationFileKind }) {
 
 const INDENT_CLASS = [
   'ml-0',
-  'ml-3',
-  'ml-6',
-  'ml-9',
-  'ml-12',
-  'ml-16',
-  'ml-20',
-  'ml-24',
+  'ml-2 sm:ml-3',
+  'ml-3 sm:ml-6',
+  'ml-4 sm:ml-9',
+  'ml-5 sm:ml-12',
+  'ml-6 sm:ml-16',
+  'ml-7 sm:ml-20',
+  'ml-8 sm:ml-24',
 ]
 
 function indentClass(depth: number): string {
@@ -76,10 +75,10 @@ function TreeNode({ entry, depth }: { entry: FolderClassificationTreeEntry; dept
             {CATEGORY_LABEL[entry.category]}
           </span>
           <span className="text-[11px] font-bold text-muted-foreground">
-            文件 {entry.total_files} · 图 {entry.image_count} · 视 {entry.video_count} · 其 {entry.other_file_count}
+            文件 {entry.total_files} 路 图 {entry.image_count} 路 视 {entry.video_count} 路 其 {entry.other_file_count}
           </span>
         </div>
-        <p className="mt-1 truncate font-mono text-[11px] text-muted-foreground" title={entry.path}>
+        <p className="mt-1 break-all font-mono text-[11px] text-muted-foreground" title={entry.path}>
           {entry.path}
         </p>
 
@@ -88,7 +87,7 @@ function TreeNode({ entry, depth }: { entry: FolderClassificationTreeEntry; dept
             {entry.files.map((file) => (
               <div key={`${entry.folder_id}:${file.name}`} className="flex items-center justify-between gap-2 text-xs">
                 <div className="min-w-0">
-                  <span className="truncate font-mono">{file.name}</span>
+                  <span className="break-all font-mono">{file.name}</span>
                 </div>
                 <div className="shrink-0">
                   <FileKindBadge kind={file.kind} />
@@ -110,136 +109,100 @@ function TreeNode({ entry, depth }: { entry: FolderClassificationTreeEntry; dept
   )
 }
 
-function FolderRow({
-  item,
-  active,
-  onSelect,
-}: {
-  item: LiveClassificationItem
-  active: boolean
-  onSelect: (folderId: string) => void
-}) {
-  return (
-    <button
-      type="button"
-      onClick={() => onSelect(item.folder_id)}
-      className={cn(
-        'w-full border-2 p-3 text-left transition-all hover:-translate-y-0.5 hover:shadow-hard',
-        active ? 'border-foreground bg-primary/15' : 'border-foreground/50 bg-card',
-      )}
-    >
-      <div className="flex items-center justify-between gap-2">
-        <p className="truncate text-sm font-black" title={item.folder_name}>
-          {item.folder_name}
-        </p>
-        <span className="text-[11px] font-bold text-muted-foreground">{STATUS_LABEL[item.classification_status]}</span>
-      </div>
-      <p className="mt-1 truncate font-mono text-[11px] text-muted-foreground" title={item.folder_path}>
-        {item.folder_path}
-      </p>
-      <div className="mt-2 flex items-center justify-between gap-2 text-[11px] font-bold">
-        <span>{CATEGORY_LABEL[item.category]}</span>
-        <span>{formatTime(item.last_event_at)}</span>
-      </div>
-    </button>
-  )
-}
-
 export default function LiveClassificationPage() {
-  const orderedIds = useLiveClassificationStore((s) => s.orderedIds)
+  const navigate = useNavigate()
+  const params = useParams<{ id: string }>()
+  const folderId = params.id?.trim() ?? ''
+
   const itemsById = useLiveClassificationStore((s) => s.itemsById)
   const currentScanJobId = useLiveClassificationStore((s) => s.currentScanJobId)
-  const selectedFolderId = useLiveClassificationStore((s) => s.selectedFolderId)
+  const focusFolderId = useLiveClassificationStore((s) => s.focusFolderId)
   const treeByFolderId = useLiveClassificationStore((s) => s.treeByFolderId)
   const treeLoadingFolderId = useLiveClassificationStore((s) => s.treeLoadingFolderId)
   const treeError = useLiveClassificationStore((s) => s.treeError)
   const isLoading = useLiveClassificationStore((s) => s.isLoading)
   const error = useLiveClassificationStore((s) => s.error)
-  const loadInitial = useLiveClassificationStore((s) => s.loadInitial)
-  const selectFolder = useLiveClassificationStore((s) => s.selectFolder)
+  const setFocusFolder = useLiveClassificationStore((s) => s.setFocusFolder)
+  const clearFocusFolder = useLiveClassificationStore((s) => s.clearFocusFolder)
+  const loadFolderLiveState = useLiveClassificationStore((s) => s.loadFolderLiveState)
 
   useEffect(() => {
-    if (orderedIds.length === 0) {
-      void loadInitial()
+    if (!folderId) return
+    setFocusFolder(folderId)
+    void loadFolderLiveState(folderId)
+    return () => {
+      clearFocusFolder()
     }
-  }, [loadInitial, orderedIds.length])
+  }, [clearFocusFolder, folderId, loadFolderLiveState, setFocusFolder])
 
-  const selectedTree = selectedFolderId ? treeByFolderId[selectedFolderId] : undefined
-  const selectedItem = selectedFolderId ? itemsById[selectedFolderId] : undefined
+  const liveItem = itemsById[folderId]
+  const tree = treeByFolderId[folderId]
+  const isTreeLoading = treeLoadingFolderId === folderId
+  const isFocused = focusFolderId === '' || focusFolderId === folderId
 
   return (
     <section className="space-y-4">
       <header className="flex flex-wrap items-end justify-between gap-3 border-b-2 border-foreground pb-3">
         <div>
           <h1 className="text-3xl font-black tracking-tight">实时分类</h1>
-          <p className="mt-1 text-sm font-bold text-muted-foreground">
-            查看每个目录下的子目录与文件分类结果（实时刷新）。
-          </p>
+          <p className="mt-1 text-sm font-bold text-muted-foreground">仅展示当前文件夹的实时分类状态与分类树。</p>
         </div>
-        {currentScanJobId && (
-          <div className="inline-flex items-center gap-2 border-2 border-foreground bg-blue-100 px-3 py-2 text-xs font-black text-blue-900">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            扫描任务进行中：{currentScanJobId}
-          </div>
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => navigate('/')}
+            className="border-2 border-foreground bg-background px-3 py-2 text-xs font-bold transition-all hover:-translate-y-0.5 hover:bg-foreground hover:text-background hover:shadow-hard"
+          >
+            返回列表
+          </button>
+          {currentScanJobId && (
+            <div className="inline-flex items-center gap-2 border-2 border-foreground bg-blue-100 px-3 py-2 text-xs font-black text-blue-900">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              扫描任务进行中：{currentScanJobId}
+            </div>
+          )}
+        </div>
       </header>
 
-      {error && (
+      {!folderId && (
+        <div className="border-2 border-red-900 bg-red-100 px-4 py-3 text-sm font-bold text-red-900">
+          目录 ID 无效，请从列表页重新进入。
+        </div>
+      )}
+
+      {folderId && !isFocused && (
+        <div className="border-2 border-red-900 bg-red-100 px-4 py-3 text-sm font-bold text-red-900">
+          当前页面焦点目录异常，请返回列表后重试。
+        </div>
+      )}
+
+      {folderId && error && (
         <div className="border-2 border-red-900 bg-red-100 px-4 py-3 text-sm font-bold text-red-900">
           {error}
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[380px_1fr]">
-        <aside className="space-y-3 border-2 border-foreground bg-muted/20 p-3">
-          <div className="flex items-center justify-between border-b-2 border-foreground pb-2">
-            <h2 className="text-sm font-black">目录队列</h2>
-            <span className="border-2 border-foreground bg-background px-1.5 py-0.5 text-[11px] font-black">
-              {orderedIds.length}
-            </span>
+      <main className="space-y-3 border-2 border-foreground bg-card p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b-2 border-foreground pb-2">
+          <div className="min-w-0">
+            <h2 className="truncate text-sm font-black">
+              {liveItem ? `目录内容分类 路 ${liveItem.folder_name}` : '目录内容分类'}
+            </h2>
+            {liveItem && (
+              <p className="break-all font-mono text-[11px] text-muted-foreground" title={liveItem.folder_path}>
+                {liveItem.folder_path}
+              </p>
+            )}
           </div>
-
-          {isLoading && orderedIds.length === 0 ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-5 w-5 animate-spin" />
-            </div>
-          ) : orderedIds.length === 0 ? (
-            <p className="py-8 text-center text-xs font-bold text-muted-foreground">暂无目录</p>
-          ) : (
-            <div className="max-h-[72vh] space-y-2 overflow-auto pr-1">
-              {orderedIds.map((id) => {
-                const item = itemsById[id]
-                if (!item) return null
-                return (
-                  <FolderRow
-                    key={id}
-                    item={item}
-                    active={id === selectedFolderId}
-                    onSelect={(folderID) => {
-                      void selectFolder(folderID)
-                    }}
-                  />
-                )
-              })}
-            </div>
-          )}
-        </aside>
-
-        <main className="space-y-3 border-2 border-foreground bg-card p-3">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b-2 border-foreground pb-2">
-            <div className="min-w-0">
-              <h2 className="truncate text-sm font-black">
-                {selectedItem ? `目录内容分类 · ${selectedItem.folder_name}` : '目录内容分类'}
-              </h2>
-              {selectedItem && (
-                <p className="truncate font-mono text-[11px] text-muted-foreground" title={selectedItem.folder_path}>
-                  {selectedItem.folder_path}
-                </p>
-              )}
-            </div>
-            {selectedItem?.job_id && (
+          <div className="flex items-center gap-2">
+            {liveItem && (
+              <span className="border border-foreground/50 px-1.5 py-0.5 text-[11px] font-bold">
+                {STATUS_LABEL[liveItem.classification_status]}
+              </span>
+            )}
+            {liveItem?.job_id && (
               <Link
-                to={`/job-history?job_id=${encodeURIComponent(selectedItem.job_id)}${selectedItem.workflow_run_id ? `&workflow_run_id=${encodeURIComponent(selectedItem.workflow_run_id)}` : ''}`}
+                to={`/job-history?job_id=${encodeURIComponent(liveItem.job_id)}${liveItem.workflow_run_id ? `&workflow_run_id=${encodeURIComponent(liveItem.workflow_run_id)}` : ''}`}
                 className="inline-flex items-center gap-1 border-2 border-foreground px-2 py-1 text-[11px] font-bold transition-all hover:-translate-y-0.5 hover:bg-foreground hover:text-background hover:shadow-hard"
               >
                 作业历史
@@ -247,36 +210,57 @@ export default function LiveClassificationPage() {
               </Link>
             )}
           </div>
+        </div>
 
-          {!selectedFolderId ? (
-            <div className="flex min-h-[320px] items-center justify-center text-sm font-bold text-muted-foreground">
-              请先从左侧选择一个目录
-            </div>
-          ) : treeLoadingFolderId === selectedFolderId && !selectedTree ? (
-            <div className="flex min-h-[320px] items-center justify-center gap-2 text-sm font-bold">
-              <Loader2 className="h-5 w-5 animate-spin" />
-              正在加载目录分类树
-            </div>
-          ) : treeError && !selectedTree ? (
-            <div className="border-2 border-red-900 bg-red-100 px-4 py-3 text-sm font-bold text-red-900">
+        {isLoading && !liveItem ? (
+          <div className="flex min-h-[320px] items-center justify-center gap-2 text-sm font-bold">
+            <Loader2 className="h-5 w-5 animate-spin" />
+            正在加载目录实时信息...
+          </div>
+        ) : !liveItem ? (
+          <div className="flex min-h-[320px] flex-col items-center justify-center gap-3 text-sm font-bold text-muted-foreground">
+            <p>未找到该目录或目录已不存在。</p>
+            <button
+              type="button"
+              onClick={() => navigate('/')}
+              className="border-2 border-foreground bg-background px-3 py-2 text-xs font-bold transition-all hover:-translate-y-0.5 hover:bg-foreground hover:text-background hover:shadow-hard"
+            >
+              返回文件夹列表
+            </button>
+          </div>
+        ) : isTreeLoading && !tree ? (
+          <div className="flex min-h-[320px] items-center justify-center gap-2 text-sm font-bold">
+            <Loader2 className="h-5 w-5 animate-spin" />
+            正在加载目录分类树...
+          </div>
+        ) : treeError && !tree ? (
+          <div className="flex min-h-[320px] flex-col items-center justify-center gap-3">
+            <div className="w-full border-2 border-red-900 bg-red-100 px-4 py-3 text-sm font-bold text-red-900">
               {treeError}
             </div>
-          ) : selectedTree ? (
-            <div className="max-h-[72vh] space-y-2 overflow-auto pr-1">
-              <div className="mb-2 inline-flex items-center gap-1 border border-foreground/30 bg-background px-2 py-1 text-[11px] font-bold text-muted-foreground">
-                <FolderTree className="h-3.5 w-3.5" />
-                最近刷新：{selectedItem ? formatTime(selectedItem.last_event_at) : '-'}
-                {treeLoadingFolderId === selectedFolderId && <Clock3 className="h-3.5 w-3.5 animate-pulse" />}
-              </div>
-              <TreeNode entry={selectedTree} depth={0} />
+            <button
+              type="button"
+              onClick={() => navigate('/')}
+              className="border-2 border-foreground bg-background px-3 py-2 text-xs font-bold transition-all hover:-translate-y-0.5 hover:bg-foreground hover:text-background hover:shadow-hard"
+            >
+              返回文件夹列表
+            </button>
+          </div>
+        ) : tree ? (
+          <div className="max-h-[72vh] space-y-2 overflow-auto pr-1">
+            <div className="mb-2 inline-flex items-center gap-1 border border-foreground/30 bg-background px-2 py-1 text-[11px] font-bold text-muted-foreground">
+              <FolderTree className="h-3.5 w-3.5" />
+              最近刷新：{formatTime(liveItem.last_event_at)}
+              {isTreeLoading && <Clock3 className="h-3.5 w-3.5 animate-pulse" />}
             </div>
-          ) : (
-            <div className="flex min-h-[320px] items-center justify-center text-sm font-bold text-muted-foreground">
-              当前目录暂无分类树数据
-            </div>
-          )}
-        </main>
-      </div>
+            <TreeNode entry={tree} depth={0} />
+          </div>
+        ) : (
+          <div className="flex min-h-[320px] items-center justify-center text-sm font-bold text-muted-foreground">
+            当前目录暂无分类树数据。
+          </div>
+        )}
+      </main>
     </section>
   )
 }

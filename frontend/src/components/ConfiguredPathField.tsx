@@ -101,7 +101,7 @@ export function ConfiguredPathField({
 
   return (
     <div className="space-y-2">
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         {(['output', 'custom'] as const).map((mode) => (
           <button
             key={mode}
@@ -147,7 +147,7 @@ export function ConfiguredPathField({
       )}
 
       {value.pathRefType === 'custom' && (
-        <div className="flex gap-2">
+        <div className="flex flex-col gap-2 sm:flex-row">
           <input
             type="text"
             value={value.pathRefKey}
@@ -158,7 +158,7 @@ export function ConfiguredPathField({
           <button
             type="button"
             onClick={() => setOpen(true)}
-            className="shrink-0 border-2 border-foreground bg-background px-3 py-2 text-foreground transition-all hover:bg-foreground hover:text-background hover:-translate-y-0.5"
+            className="border-2 border-foreground bg-background px-3 py-2 text-foreground transition-all hover:bg-foreground hover:text-background hover:-translate-y-0.5 sm:shrink-0"
           >
             <FolderOpen className="h-4 w-4" />
           </button>

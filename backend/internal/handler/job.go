@@ -19,6 +19,7 @@ type WorkflowJobStarter interface {
 
 type JobHandler struct {
 	jobs             repository.JobRepository
+	folders          repository.FolderRepository
 	workflowStarter  WorkflowJobStarter
 	config           repository.ConfigRepository
 	defaultSourceDir string
@@ -30,12 +31,14 @@ func NewJobHandler(jobRepo repository.JobRepository) *JobHandler {
 
 func NewJobHandlerWithWorkflow(
 	jobRepo repository.JobRepository,
+	folderRepo repository.FolderRepository,
 	workflowStarter WorkflowJobStarter,
 	config repository.ConfigRepository,
 	defaultSourceDir string,
 ) *JobHandler {
 	return &JobHandler{
 		jobs:             jobRepo,
+		folders:          folderRepo,
 		workflowStarter:  workflowStarter,
 		config:           config,
 		defaultSourceDir: strings.TrimSpace(defaultSourceDir),
@@ -75,7 +78,7 @@ func (h *JobHandler) List(c *gin.Context) {
 
 	resp := make([]gin.H, 0, len(items))
 	for _, item := range items {
-		resp = append(resp, serializeJob(item))
+		resp = append(resp, h.serializeJob(c.Request.Context(), item))
 	}
 
 	c.JSON(http.StatusOK, gin.H{"data": resp, "total": total, "page": page, "limit": limit})
@@ -92,7 +95,7 @@ func (h *JobHandler) Get(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"data": serializeJob(job)})
+	c.JSON(http.StatusOK, gin.H{"data": h.serializeJob(c.Request.Context(), job)})
 }
 
 func (h *JobHandler) Progress(c *gin.Context) {
@@ -123,8 +126,9 @@ func (h *JobHandler) StartWorkflow(c *gin.Context) {
 	}
 
 	var req struct {
-		WorkflowDefID string `json:"workflow_def_id"`
-		SourceDir     string `json:"source_dir"`
+		WorkflowDefID string   `json:"workflow_def_id"`
+		SourceDir     string   `json:"source_dir"`
+		FolderIDs     []string `json:"folder_ids"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -144,6 +148,7 @@ func (h *JobHandler) StartWorkflow(c *gin.Context) {
 	jobID, err := h.workflowStarter.StartJob(c.Request.Context(), service.StartWorkflowJobInput{
 		WorkflowDefID: req.WorkflowDefID,
 		SourceDir:     sourceDir,
+		FolderIDs:     req.FolderIDs,
 	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to start workflow job"})
@@ -165,7 +170,7 @@ func (h *JobHandler) resolveWorkflowSourceDir(ctx context.Context) string {
 	return strings.TrimSpace(h.defaultSourceDir)
 }
 
-func serializeJob(job *repository.Job) gin.H {
+func (h *JobHandler) serializeJob(ctx context.Context, job *repository.Job) gin.H {
 	folderIDs := make([]string, 0)
 	if job.FolderIDs != "" {
 		parsed := make([]string, 0)
@@ -173,6 +178,7 @@ func serializeJob(job *repository.Job) gin.H {
 			folderIDs = parsed
 		}
 	}
+	folderTargets := h.resolveFolderTargets(ctx, folderIDs)
 
 	return gin.H{
 		"id":              job.ID,
@@ -180,6 +186,7 @@ func serializeJob(job *repository.Job) gin.H {
 		"workflow_def_id": job.WorkflowDefID,
 		"status":          job.Status,
 		"folder_ids":      folderIDs,
+		"folder_targets":  folderTargets,
 		"total":           job.Total,
 		"done":            job.Done,
 		"failed":          job.Failed,
@@ -189,4 +196,33 @@ func serializeJob(job *repository.Job) gin.H {
 		"created_at":      job.CreatedAt,
 		"updated_at":      job.UpdatedAt,
 	}
+}
+
+func (h *JobHandler) resolveFolderTargets(ctx context.Context, folderIDs []string) []repository.FolderTarget {
+	if len(folderIDs) == 0 {
+		return []repository.FolderTarget{}
+	}
+
+	targets := make([]repository.FolderTarget, 0, len(folderIDs))
+	for _, rawFolderID := range folderIDs {
+		folderID := strings.TrimSpace(rawFolderID)
+		if folderID == "" {
+			continue
+		}
+
+		target := repository.FolderTarget{ID: folderID}
+		if h.folders != nil {
+			folder, err := h.folders.GetByID(ctx, folderID)
+			if err == nil && folder != nil {
+				target.Name = strings.TrimSpace(folder.Name)
+				target.Path = strings.TrimSpace(folder.Path)
+			}
+		}
+		if target.Name == "" {
+			target.Name = folderID
+		}
+		targets = append(targets, target)
+	}
+
+	return targets
 }

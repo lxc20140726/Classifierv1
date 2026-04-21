@@ -233,7 +233,7 @@ func TestJobHandler_StartWorkflow(t *testing.T) {
 
 	t.Run("invalid body and required field", func(t *testing.T) {
 		starter := &stubWorkflowJobStarter{jobID: "job-1"}
-		router := setupJobRouter(NewJobHandlerWithWorkflow(&stubJobRepository{}, starter, nil, "/default/source"))
+		router := setupJobRouter(NewJobHandlerWithWorkflow(&stubJobRepository{}, nil, starter, nil, "/default/source"))
 
 		req := httptest.NewRequest(http.MethodPost, "/jobs", bytes.NewBufferString("{"))
 		req.Header.Set("Content-Type", "application/json")
@@ -260,7 +260,7 @@ func TestJobHandler_StartWorkflow(t *testing.T) {
 			}
 			return "  /from-config  ", nil
 		}}
-		router := setupJobRouter(NewJobHandlerWithWorkflow(&stubJobRepository{}, starter, configRepo, "/from-default"))
+		router := setupJobRouter(NewJobHandlerWithWorkflow(&stubJobRepository{}, nil, starter, configRepo, "/from-default"))
 
 		req := httptest.NewRequest(http.MethodPost, "/jobs", bytes.NewBufferString(`{"workflow_def_id":"wf-1"}`))
 		req.Header.Set("Content-Type", "application/json")
@@ -287,6 +287,25 @@ func TestJobHandler_StartWorkflow(t *testing.T) {
 		}
 		if got := starter.inputs[len(starter.inputs)-1].SourceDir; got != "/from-req" {
 			t.Fatalf("request source dir = %q, want /from-req", got)
+		}
+	})
+
+	t.Run("accepts folder ids", func(t *testing.T) {
+		starter := &stubWorkflowJobStarter{jobID: "job-folder-ids"}
+		router := setupJobRouter(NewJobHandlerWithWorkflow(&stubJobRepository{}, nil, starter, nil, "/default/source"))
+
+		req := httptest.NewRequest(http.MethodPost, "/jobs", bytes.NewBufferString(`{"workflow_def_id":"wf-3","folder_ids":["f1","f2"]}`))
+		req.Header.Set("Content-Type", "application/json")
+		resp := httptest.NewRecorder()
+		router.ServeHTTP(resp, req)
+		if resp.Code != http.StatusAccepted {
+			t.Fatalf("status = %d, want %d body=%s", resp.Code, http.StatusAccepted, resp.Body.String())
+		}
+		if len(starter.inputs) != 1 {
+			t.Fatalf("starter inputs = %d, want 1", len(starter.inputs))
+		}
+		if len(starter.inputs[0].FolderIDs) != 2 {
+			t.Fatalf("folder ids len = %d, want 2", len(starter.inputs[0].FolderIDs))
 		}
 	})
 }

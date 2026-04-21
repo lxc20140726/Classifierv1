@@ -1,4 +1,4 @@
-import { create } from 'zustand'
+﻿import { create } from 'zustand'
 
 import { listJobs } from '@/api/jobs'
 import {
@@ -43,9 +43,16 @@ export interface WorkflowRunCardView {
   currentNodeType: string
   completedNodes: number
   totalNodes: number
+  currentNodeProgressPercent?: number
+  currentNodeProgressDone?: number
+  currentNodeProgressTotal?: number
+  currentNodeProgressText: string
+  progressSourcePath: string
+  progressTargetPath: string
   failureSummary: string
   reviewSummary?: ProcessingReviewSummary
   reviewProgressText: string
+  pendingReviewCount: number
   isBinding: boolean
 }
 
@@ -73,6 +80,7 @@ interface WorkflowRunStore {
   provideInput: (runId: string, category: ProvideInputBody['category']) => Promise<void>
   provideRawInput: (runId: string, body: Record<string, unknown>) => Promise<void>
   bindLatestLaunch: (workflowDefId: string, jobId: string, folderId?: string) => Promise<void>
+  bindLatestLaunchForFolders: (workflowDefId: string, jobId: string, folderIds: string[]) => Promise<void>
   restoreLatestLaunch: (workflowDefId: string, folderId?: string) => Promise<void>
   handleRunUpdated: (event: WorkflowRunUpdatedEvent) => void
   handleReviewEvent: (workflowRunId: string) => void
@@ -141,7 +149,7 @@ function persistRecentLaunches(next: Record<string, RecentLaunchRecord>) {
   try {
     window.localStorage.setItem(RECENT_LAUNCH_STORAGE_KEY, JSON.stringify(next))
   } catch {
-    // 忽略持久化异常，避免影响主流程
+    // 蹇界暐鎸佷箙鍖栧紓甯革紝閬垮厤褰卞搷涓绘祦绋?
   }
 }
 
@@ -462,6 +470,51 @@ export const useWorkflowRunStore = create<WorkflowRunStore>((set, get) => ({
     }
   },
 
+  async bindLatestLaunchForFolders(workflowDefId, jobId, folderIds) {
+    if (!workflowDefId || !jobId) return
+    const normalizedFolderIds = [...new Set(folderIds.map((id) => id.trim()).filter((id) => id !== ''))]
+    if (normalizedFolderIds.length === 0) return
+
+    set((state) => {
+      let nextRecent = state.recentLaunchByScope
+      normalizedFolderIds.forEach((folderId) => {
+        nextRecent = setRecentLaunchRecord(nextRecent, workflowDefId, jobId, undefined, folderId)
+      })
+      persistRecentLaunches(nextRecent)
+      return { recentLaunchByScope: nextRecent }
+    })
+
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      await get().fetchRunsForJob(jobId)
+      const runs = get().runsByJobId[jobId] ?? []
+      const matchedRunsByFolder = new Map<string, WorkflowRun>()
+      runs.forEach((run) => {
+        if (run.workflow_def_id !== workflowDefId) return
+        const folderId = run.folder_id?.trim() ?? ''
+        if (!normalizedFolderIds.includes(folderId)) return
+        matchedRunsByFolder.set(folderId, run)
+      })
+      if (matchedRunsByFolder.size > 0) {
+        set((state) => {
+          let nextRecent = state.recentLaunchByScope
+          matchedRunsByFolder.forEach((run, folderId) => {
+            nextRecent = setRecentLaunchRecord(nextRecent, workflowDefId, jobId, run.id, folderId)
+          })
+          persistRecentLaunches(nextRecent)
+          return { recentLaunchByScope: nextRecent }
+        })
+        matchedRunsByFolder.forEach((run) => {
+          void get().fetchRunDetail(run.id)
+          if (run.status === 'waiting_input') {
+            void get().fetchRunReviews(run.id)
+          }
+        })
+        return
+      }
+      await delay(250)
+    }
+  },
+
   async restoreLatestLaunch(workflowDefId, folderId) {
     if (!workflowDefId) return
 
@@ -726,8 +779,15 @@ export const useWorkflowRunStore = create<WorkflowRunStore>((set, get) => ({
         currentNodeType: '',
         completedNodes: 0,
         totalNodes,
+        currentNodeProgressPercent: undefined,
+        currentNodeProgressDone: undefined,
+        currentNodeProgressTotal: undefined,
+        currentNodeProgressText: '等待运行开始',
+        progressSourcePath: '',
+        progressTargetPath: '',
         failureSummary: '',
         reviewProgressText: '等待关联运行记录',
+        pendingReviewCount: 0,
         isBinding: true,
       }
     }
@@ -753,7 +813,13 @@ export const useWorkflowRunStore = create<WorkflowRunStore>((set, get) => ({
     const reviewSummary = get().reviewSummaryByRunId[run.id]
     const reviewProgressText = reviewSummary
       ? `${reviewSummary.approved + reviewSummary.rolled_back} / ${reviewSummary.total}`
-      : '—'
+      : '-'
+    const currentNodeProgressDone = currentNode?.progress_done
+    const currentNodeProgressTotal = currentNode?.progress_total
+    const currentNodeProgressPercent = currentNode?.progress_percent
+    const currentNodeProgressText = currentNode?.progress_stage
+      ?? currentNode?.progress_message
+      ?? (run.status === 'waiting_input' ? '等待人工确认' : '等待节点进度')
 
     const latestFailedNode = [...nodeRuns]
       .filter((nodeRun) => nodeRun.status === 'failed' && nodeRun.error.trim() !== '')
@@ -768,9 +834,16 @@ export const useWorkflowRunStore = create<WorkflowRunStore>((set, get) => ({
       currentNodeType: currentNode?.node_type ?? '',
       completedNodes,
       totalNodes: normalizedTotalNodes,
+      currentNodeProgressPercent,
+      currentNodeProgressDone,
+      currentNodeProgressTotal,
+      currentNodeProgressText,
+      progressSourcePath: currentNode?.progress_source_path ?? '',
+      progressTargetPath: currentNode?.progress_target_path ?? '',
       failureSummary: run.error?.trim() || latestFailedNode?.error?.trim() || '',
       reviewSummary,
       reviewProgressText,
+      pendingReviewCount: reviewSummary?.pending ?? 0,
       isBinding: false,
     }
   },

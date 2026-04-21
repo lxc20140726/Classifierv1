@@ -88,6 +88,11 @@ export interface Job {
   workflow_def_id?: string
   status: JobStatus
   folder_ids: string[] | null
+  folder_targets?: Array<{
+    id: string
+    name: string
+    path: string
+  }>
   total: number
   done: number
   failed: number
@@ -208,6 +213,8 @@ export interface WorkflowRun {
   id: string
   job_id: string
   folder_id: string
+  folder_name?: string
+  folder_path?: string
   source_dir?: string
   workflow_def_id: string
   status: WorkflowRunStatus

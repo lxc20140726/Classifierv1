@@ -15,6 +15,8 @@ export interface WorkflowRunQueryParams {
 
 export interface StartWorkflowJobBody {
   workflow_def_id: string
+  source_dir?: string
+  folder_ids?: string[]
 }
 
 export function startWorkflowJob(body: StartWorkflowJobBody) {

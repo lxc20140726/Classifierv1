@@ -1,4 +1,4 @@
-import { BrowserRouter, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 
 import { Layout } from '@/components/Layout'
 import { useSSE } from '@/hooks/useSSE'
@@ -24,7 +24,8 @@ export default function App() {
         <Route path="/" element={<Layout />}>
           <Route index element={<FolderListPage />} />
           <Route path="folders/:id/lineage" element={<FolderLineagePage />} />
-          <Route path="live-classification" element={<LiveClassificationPage />} />
+          <Route path="folders/:id/live-classification" element={<LiveClassificationPage />} />
+          <Route path="live-classification" element={<Navigate to="/" replace />} />
           <Route path="audit-logs" element={<AuditLogsPage />} />
           <Route path="jobs" element={<JobsPage />} />
           <Route path="job-history" element={<JobHistoryPage />} />

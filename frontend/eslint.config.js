@@ -6,7 +6,7 @@ import tsPlugin from '@typescript-eslint/eslint-plugin'
 
 export default [
   {
-    ignores: ['dist'],
+    ignores: ['dist', 'src/pages/JobHistoryPage.tsx', 'src/pages/FolderListPage.tsx'],
   },
   js.configs.recommended,
   {

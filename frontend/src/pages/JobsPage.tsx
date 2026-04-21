@@ -15,6 +15,7 @@ import {
 import { listWorkflowDefs } from '@/api/workflowDefs'
 import { CronExpressionField } from '@/components/CronExpressionField'
 import { DirPicker } from '@/components/DirPicker'
+import { useIsMobile } from '@/hooks/useIsMobile'
 import { cn } from '@/lib/utils'
 import { useConfigStore } from '@/store/configStore'
 import type { ScheduledWorkflow, WorkflowDefinition } from '@/types'
@@ -50,6 +51,7 @@ function ScheduledWorkflowTable({
   workflows,
   workflowDefs,
   isLoading,
+  isMobile,
   runningId,
   onCreate,
   onEdit,
@@ -59,6 +61,7 @@ function ScheduledWorkflowTable({
   workflows: ScheduledWorkflow[]
   workflowDefs: WorkflowDefinition[]
   isLoading: boolean
+  isMobile: boolean
   runningId: string | null
   onCreate: () => void
   onEdit: (workflow: ScheduledWorkflow) => void
@@ -74,7 +77,7 @@ function ScheduledWorkflowTable({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-xl font-black tracking-tight">计划任务</h2>
           <p className="mt-1 text-sm font-medium text-muted-foreground">用 cron 管理工作流执行。</p>
@@ -82,15 +85,77 @@ function ScheduledWorkflowTable({
         <button
           type="button"
           onClick={onCreate}
-          className="inline-flex items-center gap-2 border-2 border-foreground bg-primary px-4 py-2 text-sm font-bold text-primary-foreground transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5"
+          className="inline-flex w-full items-center justify-center gap-2 border-2 border-foreground bg-primary px-4 py-2 text-sm font-bold text-primary-foreground transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5 sm:w-auto"
         >
           <Plus className="h-4 w-4" />
           新建计划任务
         </button>
       </div>
 
+      {isMobile ? (
+        <div className="space-y-3">
+          {isLoading ? (
+            <div className="border-2 border-foreground bg-card px-4 py-16 text-center font-bold text-muted-foreground shadow-hard">
+              姝ｅ湪鍔犺浇璁″垝浠诲姟...
+            </div>
+          ) : workflows.length === 0 ? (
+            <div className="border-2 border-dashed border-foreground bg-card px-4 py-16 text-center font-bold text-muted-foreground shadow-hard">
+              鏆傛棤璁″垝浠诲姟锛屽彲鍒涘缓甯?cron 鐨勫伐浣滄祦浣滀笟銆?
+            </div>
+          ) : (
+            workflows.map((workflow) => (
+              <article key={workflow.id} className="border-2 border-foreground bg-card p-4 shadow-hard">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <p className="break-all text-sm font-black">{workflow.name}</p>
+                  <span
+                    className={cn(
+                      'inline-flex border-2 border-foreground px-2 py-0.5 text-[10px] font-black',
+                      workflow.enabled ? 'bg-green-300 text-green-900' : 'bg-gray-200 text-gray-900',
+                    )}
+                  >
+                    {workflow.enabled ? '已启用' : '已停用'}
+                  </span>
+                </div>
+                <div className="mt-3 space-y-1 text-xs font-bold text-muted-foreground">
+                  <p>{workflow.job_type === 'scan' ? '扫描' : '工作流'}</p>
+                  <p className="break-all">{workflow.job_type === 'scan' ? '鎵弿鐩綍' : (workflowNameMap[workflow.workflow_def_id] ?? workflow.workflow_def_id)}</p>
+                  <p className="break-all font-mono">{workflow.cron_spec}</p>
+                  <p className="font-mono">{formatDate(workflow.last_run_at)}</p>
+                  <p className="tabular-nums text-foreground">{workflow.job_type === 'scan' ? workflow.source_dirs.length : workflow.folder_ids.length}</p>
+                </div>
+                <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                  <button
+                    type="button"
+                    onClick={() => onEdit(workflow)}
+                    className="border-2 border-foreground bg-background px-3 py-2 text-xs font-bold transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5"
+                  >
+                    缂栬緫
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void onRunNow(workflow)}
+                    disabled={runningId === workflow.id}
+                    className="inline-flex items-center justify-center gap-1 border-2 border-foreground bg-primary px-3 py-2 text-xs font-bold text-primary-foreground transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5 disabled:opacity-50 disabled:hover:bg-primary disabled:hover:text-primary-foreground disabled:hover:shadow-none disabled:hover:translate-y-0"
+                  >
+                    <Play className="h-3 w-3" />
+                    {runningId === workflow.id ? '启动中' : '立即执行'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void onDelete(workflow)}
+                    className="inline-flex items-center justify-center gap-1 border-2 border-red-900 bg-red-100 px-3 py-2 text-xs font-bold text-red-900 transition-all hover:bg-red-900 hover:text-red-100 hover:shadow-hard hover:-translate-y-0.5"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                    鍒犻櫎
+                  </button>
+                </div>
+              </article>
+            ))
+          )}
+        </div>
+      ) : (
       <div className="overflow-hidden border-2 border-foreground bg-card shadow-hard">
-        <table className="w-full text-sm">
+        <table className="table-fixed w-full min-w-0 text-sm">
           <thead className="bg-muted/50 border-b-2 border-foreground">
             <tr>
               <th className="px-4 py-4 text-left font-black tracking-widest">名称</th>
@@ -115,7 +180,7 @@ function ScheduledWorkflowTable({
             ) : (
               workflows.map((workflow) => (
                 <tr key={workflow.id} className="scheduled-row border-b-2 border-foreground last:border-0 hover:bg-muted/30 transition-colors">
-                  <td className="px-4 py-4 font-black">{workflow.name}</td>
+                  <td className="px-4 py-4 font-black break-all">{workflow.name}</td>
                   <td className="px-4 py-4 font-bold text-muted-foreground">{workflow.job_type === 'scan' ? '扫描' : '工作流'}</td>
                   <td className="px-4 py-4 font-bold text-muted-foreground">{workflow.job_type === 'scan' ? '扫描目录' : (workflowNameMap[workflow.workflow_def_id] ?? workflow.workflow_def_id)}</td>
                   <td className="px-4 py-4 font-mono text-xs font-bold bg-muted/50 px-2">{workflow.cron_spec}</td>
@@ -130,7 +195,7 @@ function ScheduledWorkflowTable({
                   </td>
                   <td className="px-4 py-4 font-mono text-xs font-bold text-muted-foreground">{formatDate(workflow.last_run_at)}</td>
                   <td className="px-4 py-4">
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <button
                         type="button"
                         onClick={() => onEdit(workflow)}
@@ -163,6 +228,7 @@ function ScheduledWorkflowTable({
           </tbody>
         </table>
       </div>
+      )}
     </div>
   )
 }
@@ -208,7 +274,7 @@ function ScheduledWorkflowModal({
 
   return (
     <div ref={overlayRef} className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4 py-8 overflow-y-auto">
-      <div ref={modalRef} className="w-full max-w-4xl border-2 border-foreground bg-background shadow-hard-lg my-auto">
+      <div ref={modalRef} className="my-auto max-h-[calc(100dvh-2rem)] w-full max-w-4xl overflow-y-auto border-2 border-foreground bg-background shadow-hard-lg">
         <div className="flex items-center justify-between border-b-2 border-foreground bg-primary px-6 py-5 text-primary-foreground">
           <div>
             <h2 className="text-xl font-black tracking-tight">{modal.kind === 'create' ? '新建计划任务' : '编辑计划任务'}</h2>
@@ -351,7 +417,7 @@ function ScheduledWorkflowModal({
           </div>
         </div>
 
-        <div className="flex items-center justify-end gap-3 border-t-2 border-foreground bg-muted/30 px-6 py-5">
+        <div className="flex flex-wrap items-center justify-end gap-3 border-t-2 border-foreground bg-muted/30 px-6 py-5">
           <button type="button" onClick={onClose} disabled={isSaving} className="border-2 border-foreground bg-background px-6 py-2.5 text-sm font-bold transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5 disabled:opacity-50">
             取消
           </button>
@@ -379,6 +445,7 @@ function ScheduledWorkflowModal({
 
 export default function JobsPage() {
   const navigate = useNavigate()
+  const isMobile = useIsMobile(1024)
   const [scheduledWorkflows, setScheduledWorkflows] = useState<ScheduledWorkflow[]>([])
   const [workflowDefs, setWorkflowDefs] = useState<WorkflowDefinition[]>([])
   const [isScheduledLoading, setIsScheduledLoading] = useState(false)
@@ -541,6 +608,7 @@ export default function JobsPage() {
         workflows={scheduledWorkflows}
         workflowDefs={workflowDefs}
         isLoading={isScheduledLoading}
+        isMobile={isMobile}
         runningId={runningId}
         onCreate={openCreateModal}
         onEdit={openEditModal}

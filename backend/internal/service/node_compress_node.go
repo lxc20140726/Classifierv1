@@ -145,7 +145,7 @@ func (e *compressNodeExecutor) Execute(ctx context.Context, input NodeExecutionI
 			ensuredDirs[archiveDir] = struct{}{}
 		}
 
-		files, err := e.collectArchiveFiles(ctx, sourcePath, sourcePath, includePatterns, excludePatterns)
+		files, err := e.collectArchiveFilesForItem(ctx, item, sourcePath, includePatterns, excludePatterns)
 		if err != nil {
 			return NodeExecutionOutput{}, fmt.Errorf("%s.Execute: collect archive files for %q: %w", e.Type(), sourcePath, err)
 		}
@@ -642,6 +642,66 @@ func (e *compressNodeExecutor) collectArchiveFiles(
 			continue
 		}
 
+		if !compressNodeShouldInclude(relPath, includePatterns) || compressNodeShouldExclude(relPath, excludePatterns) {
+			continue
+		}
+		files = append(files, compressArchiveFile{
+			FullPath: fullPath,
+			RelPath:  relPath,
+		})
+	}
+
+	return files, nil
+}
+
+func (e *compressNodeExecutor) collectArchiveFilesForItem(
+	ctx context.Context,
+	item ProcessingItem,
+	sourcePath string,
+	includePatterns []string,
+	excludePatterns []string,
+) ([]compressArchiveFile, error) {
+	if len(item.Files) == 0 {
+		return e.collectArchiveFiles(ctx, sourcePath, sourcePath, includePatterns, excludePatterns)
+	}
+
+	entries, err := e.fs.ReadDir(ctx, sourcePath)
+	if err != nil {
+		return nil, fmt.Errorf("read directory %q: %w", sourcePath, err)
+	}
+
+	hasSubdir := false
+	for _, entry := range entries {
+		if entry.IsDir {
+			hasSubdir = true
+			break
+		}
+	}
+	if !hasSubdir {
+		return e.collectArchiveFiles(ctx, sourcePath, sourcePath, includePatterns, excludePatterns)
+	}
+
+	return collectDirectArchiveFiles(ctx, sourcePath, entries, includePatterns, excludePatterns)
+}
+
+func collectDirectArchiveFiles(
+	ctx context.Context,
+	sourcePath string,
+	entries []fs.DirEntry,
+	includePatterns []string,
+	excludePatterns []string,
+) ([]compressArchiveFile, error) {
+	files := make([]compressArchiveFile, 0, len(entries))
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if entry.IsDir {
+			continue
+		}
+
+		fullPath := filepath.Join(sourcePath, entry.Name)
+		relPath := filepath.ToSlash(entry.Name)
 		if !compressNodeShouldInclude(relPath, includePatterns) || compressNodeShouldExclude(relPath, excludePatterns) {
 			continue
 		}

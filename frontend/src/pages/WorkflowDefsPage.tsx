@@ -4,9 +4,9 @@ import { createPortal } from 'react-dom'
 import { Link, useNavigate } from 'react-router-dom'
 
 import { listFolders } from '@/api/folders'
-import { updateWorkflowDef } from '@/api/workflowDefs'
 import { startWorkflowJob } from '@/api/workflowRuns'
 import { WorkflowRunStatusCard } from '@/components/WorkflowRunStatusCard'
+import { useIsMobile } from '@/hooks/useIsMobile'
 import {
   getWorkflowFolderLaunchability,
   launchWorkflowForFolder,
@@ -89,6 +89,7 @@ function buildJobHistoryLink(jobId: string, workflowRunId?: string) {
 
 export default function WorkflowDefsPage(_props: WorkflowDefsPageProps) {
   const navigate = useNavigate()
+  const isMobile = useIsMobile(1024)
   const { defs, isLoading, error, fetchDefs, createDef, updateDef, deleteDef, setActive } =
     useWorkflowDefStore()
   const { bindLatestLaunch, restoreLatestLaunch, buildRunCardView } = useWorkflowRunStore()
@@ -277,17 +278,13 @@ export default function WorkflowDefsPage(_props: WorkflowDefsPageProps) {
     try {
       const result = await launchWorkflowForFolder({
         workflowDef: currentLaunchDef,
-        folderId: selectedFolderId,
-        updateWorkflowGraph: async (workflowDefId, graphJson) => {
-          await updateWorkflowDef(workflowDefId, { graph_json: graphJson })
-        },
-        startWorkflow: async (workflowDefId) => {
-          const res = await startWorkflowJob({ workflow_def_id: workflowDefId })
+        folderIds: [selectedFolderId],
+        startWorkflow: async (workflowDefId, folderIds) => {
+          const res = await startWorkflowJob({ workflow_def_id: workflowDefId, folder_ids: folderIds })
           return res.job_id
         },
         bindLatestLaunch,
       })
-      await fetchDefs()
       setLaunchSuccessJobId(result.jobId)
     } catch (err) {
       setLaunchError(err instanceof Error ? err.message : '启动失败')
@@ -329,8 +326,71 @@ export default function WorkflowDefsPage(_props: WorkflowDefsPageProps) {
       )}
 
       {defs.length > 0 && (
+        isMobile ? (
+          <div className="space-y-3">
+            {defs.map((def) => (
+              <article key={def.id} className="border-2 border-foreground bg-card p-4 shadow-hard">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <p className="break-all text-sm font-black">{def.name}</p>
+                  <p className="font-mono text-xs font-bold text-muted-foreground">v{def.version}</p>
+                </div>
+                <p className="mt-2 font-mono text-[11px] font-bold text-muted-foreground">
+                  {new Date(def.created_at).toLocaleString('zh-CN')}
+                </p>
+                <div className="mt-3">
+                  {def.is_active ? (
+                    <span className="inline-flex items-center gap-1.5 border-2 border-foreground bg-green-300 px-3 py-1 text-xs font-black text-green-900">
+                      <Check className="h-3 w-3" />
+                      宸叉縺娲?
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => void handleSetActive(def)}
+                      className="w-full border-2 border-foreground bg-background px-3 py-1.5 text-xs font-bold transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5 sm:w-auto"
+                    >
+                      璁句负婵€娲?
+                    </button>
+                  )}
+                </div>
+                <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={() => openLaunchDialog(def)}
+                    className="flex items-center justify-center gap-1.5 border-2 border-foreground bg-green-300 px-3 py-2 text-xs font-bold text-green-900 transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5"
+                  >
+                    <Play className="h-3 w-3" />
+                    鍚姩
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openEdit(def)}
+                    className="flex items-center justify-center gap-1.5 border-2 border-foreground bg-background px-3 py-2 text-xs font-bold transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5"
+                  >
+                    <Pencil className="h-3 w-3" />
+                    缂栬緫
+                  </button>
+                  <Link
+                    to={`/workflow-defs/${def.id}/editor`}
+                    className="flex items-center justify-center gap-1.5 border-2 border-foreground bg-primary px-3 py-2 text-xs font-bold text-primary-foreground transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5"
+                  >
+                    鍙鍖栫紪杈?
+                  </Link>
+                  <button
+                    type="button"
+                    onClick={() => void handleDelete(def)}
+                    className="flex items-center justify-center gap-1.5 border-2 border-red-900 bg-red-100 px-3 py-2 text-xs font-bold text-red-900 transition-all hover:bg-red-900 hover:text-red-100 hover:shadow-hard hover:-translate-y-0.5"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                    鍒犻櫎
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : (
         <div className="overflow-hidden border-2 border-foreground bg-card shadow-hard">
-          <table className="w-full text-sm">
+          <table className="table-fixed w-full min-w-0 text-sm">
             <thead>
               <tr className="border-b-2 border-foreground bg-muted/50 text-left">
                 <th className="px-5 py-4 font-black tracking-widest">名称</th>
@@ -349,7 +409,7 @@ export default function WorkflowDefsPage(_props: WorkflowDefsPageProps) {
                     idx % 2 === 0 ? 'bg-background' : 'bg-muted/10',
                   )}
                 >
-                  <td className="px-5 py-4 font-black">{def.name}</td>
+                  <td className="px-5 py-4 font-black break-all">{def.name}</td>
                   <td className="px-5 py-4 font-mono font-bold text-muted-foreground">v{def.version}</td>
                   <td className="px-5 py-4">
                     {def.is_active ? (
@@ -371,7 +431,7 @@ export default function WorkflowDefsPage(_props: WorkflowDefsPageProps) {
                     {new Date(def.created_at).toLocaleString('zh-CN')}
                   </td>
                   <td className="px-5 py-4">
-                    <div className="flex items-center gap-3">
+                    <div className="flex flex-wrap items-center gap-3">
                       <button
                         type="button"
                         onClick={() => openLaunchDialog(def)}
@@ -409,11 +469,11 @@ export default function WorkflowDefsPage(_props: WorkflowDefsPageProps) {
             </tbody>
           </table>
         </div>
-      )}
+      ))}
 
       {launchDialog.open && currentLaunchDef && typeof document !== 'undefined' && createPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="w-full max-w-2xl border-2 border-foreground bg-background p-6 shadow-hard-lg">
+          <div className="max-h-[calc(100dvh-2rem)] w-full max-w-2xl overflow-y-auto border-2 border-foreground bg-background p-4 shadow-hard-lg sm:p-6">
             <h2 className="mb-2 text-xl font-black tracking-tight">启动工作流</h2>
             <p className="mb-4 text-sm font-bold text-muted-foreground">
               当前工作流：{currentLaunchDef.name}
@@ -518,7 +578,7 @@ export default function WorkflowDefsPage(_props: WorkflowDefsPageProps) {
               </div>
             )}
 
-            <div className="mt-8 flex items-center justify-between gap-3">
+            <div className="mt-8 flex flex-wrap items-center justify-between gap-3">
               <button
                 type="button"
                 onClick={closeLaunchDialog}
@@ -528,7 +588,7 @@ export default function WorkflowDefsPage(_props: WorkflowDefsPageProps) {
                 关闭
               </button>
 
-              <div className="flex items-center gap-3">
+              <div className="flex w-full flex-wrap items-center justify-end gap-3 sm:w-auto">
                 {launchSuccessJobId && (
                   <button
                     type="button"
@@ -557,7 +617,7 @@ export default function WorkflowDefsPage(_props: WorkflowDefsPageProps) {
       {modal !== null && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className={cn(
-            'w-full border-2 border-foreground bg-background p-6 shadow-hard-lg',
+            'max-h-[calc(100dvh-2rem)] w-full overflow-y-auto border-2 border-foreground bg-background p-4 shadow-hard-lg sm:p-6',
             modal.kind === 'create' && createStep === 'pick-template' ? 'max-w-2xl' : 'max-w-lg',
           )}>
             <h2 className="mb-6 text-xl font-black tracking-tight">
@@ -608,7 +668,7 @@ export default function WorkflowDefsPage(_props: WorkflowDefsPageProps) {
               </div>
             )}
 
-            <div className="mt-8 flex justify-between gap-3">
+            <div className="mt-8 flex flex-wrap justify-between gap-3">
               <div>
                 {modal.kind === 'create' && createStep === 'fill-details' && (
                   <button
@@ -621,7 +681,7 @@ export default function WorkflowDefsPage(_props: WorkflowDefsPageProps) {
                   </button>
                 )}
               </div>
-              <div className="flex gap-3">
+              <div className="flex w-full flex-wrap justify-end gap-3 sm:w-auto">
                 <button
                   type="button"
                   onClick={closeModal}

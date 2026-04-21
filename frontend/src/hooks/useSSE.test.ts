@@ -35,6 +35,8 @@ const activityStoreState = {
 }
 
 const liveStoreState = {
+  focusFolderId: '',
+  syncFolder: vi.fn<(folderId: string) => Promise<void>>(),
   handleScanStarted: vi.fn(),
   handleScanProgress: vi.fn(),
   handleScanError: vi.fn(),
@@ -128,6 +130,8 @@ describe('useSSE', () => {
     vi.clearAllMocks()
     folderStoreState.fetchFolders.mockResolvedValue()
     folderStoreState.syncFolder.mockResolvedValue()
+    liveStoreState.focusFolderId = ''
+    liveStoreState.syncFolder.mockResolvedValue()
     jobStoreState.fetchJobs.mockResolvedValue()
     activityStoreState.fetchLogs.mockResolvedValue()
     workflowRunStoreState.runsById = {}
@@ -185,6 +189,25 @@ describe('useSSE', () => {
     expect(folderStoreState.syncFolder).not.toHaveBeenCalled()
     expect(folderStoreState.fetchFolders).not.toHaveBeenCalled()
     expect(notifyFolderActivityUpdated).not.toHaveBeenCalled()
+  })
+
+  it('workflow_run.updated 在焦点文件夹不匹配时不触发实时页同步', async () => {
+    liveStoreState.focusFolderId = 'folder-focused'
+    const source = MockEventSource.instances[0]
+    expect(source).toBeDefined()
+
+    source.emit('workflow_run.updated', {
+      job_id: 'job-5',
+      workflow_run_id: 'run-5',
+      workflow_def_id: 'wf-5',
+      folder_id: 'folder-other',
+      status: 'succeeded',
+    })
+
+    await vi.waitFor(() => {
+      expect(workflowRunStoreState.handleRunUpdated).toHaveBeenCalledTimes(1)
+    })
+    expect(liveStoreState.syncFolder).not.toHaveBeenCalled()
   })
 
   it('workflow_run.review_pending 有本地 folder_id 时仅同步单条目录', async () => {

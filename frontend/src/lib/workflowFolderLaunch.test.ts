@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+﻿import { describe, expect, it, vi } from 'vitest'
 
 import {
   getWorkflowFolderLaunchability,
@@ -18,31 +18,11 @@ const VALID_GRAPH = JSON.stringify({
 })
 
 describe('workflowFolderLaunch', () => {
-  it('后端更新图失败时抛错并中断启动', async () => {
-    const updateError = new Error('更新失败')
-    const startWorkflow = vi.fn(async () => 'job-1')
-
+  it('启动任务失败时透传错误', async () => {
     await expect(
       launchWorkflowForFolder({
         workflowDef: { id: 'wf-1', graph_json: VALID_GRAPH },
-        folderId: 'folder-1',
-        updateWorkflowGraph: vi.fn(async () => {
-          throw updateError
-        }),
-        startWorkflow,
-        bindLatestLaunch: vi.fn(async () => undefined),
-      }),
-    ).rejects.toThrow('更新失败')
-
-    expect(startWorkflow).not.toHaveBeenCalled()
-  })
-
-  it('后端启动任务失败时透传错误', async () => {
-    await expect(
-      launchWorkflowForFolder({
-        workflowDef: { id: 'wf-1', graph_json: VALID_GRAPH },
-        folderId: 'folder-2',
-        updateWorkflowGraph: vi.fn(async () => undefined),
+        folderIds: ['folder-2'],
         startWorkflow: vi.fn(async () => {
           throw new Error('启动失败')
         }),
@@ -55,5 +35,17 @@ describe('workflowFolderLaunch', () => {
     const result = getWorkflowFolderLaunchability('{')
     expect(result.canLaunch).toBe(false)
     expect(result.error).toBeTruthy()
+  })
+
+  it('批量时会去重并传递 folder_ids', async () => {
+    const startWorkflow = vi.fn(async () => 'job-1')
+    await launchWorkflowForFolder({
+      workflowDef: { id: 'wf-1', graph_json: VALID_GRAPH },
+      folderIds: ['folder-1', 'folder-1', ' folder-2 '],
+      startWorkflow,
+      bindLatestLaunch: vi.fn(async () => undefined),
+    })
+
+    expect(startWorkflow).toHaveBeenCalledWith('wf-1', ['folder-1', 'folder-2'])
   })
 })

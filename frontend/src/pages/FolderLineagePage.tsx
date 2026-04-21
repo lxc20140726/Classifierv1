@@ -5,6 +5,7 @@ import { Link, useParams } from 'react-router-dom'
 import { ApiRequestError } from '@/api/client'
 import { getFolderLineage } from '@/api/folders'
 import { PathChangePreview } from '@/components/PathChangePreview'
+import { useIsMobile } from '@/hooks/useIsMobile'
 import { cn } from '@/lib/utils'
 import type {
   FolderLineageDirectory,
@@ -413,6 +414,7 @@ function DirectoryCard({
 }
 
 export default function FolderLineagePage() {
+  const isMobile = useIsMobile(1024)
   const { id } = useParams<{ id: string }>()
   const [data, setData] = useState<FolderLineageResponse | null>(null)
   const [selectedFile, setSelectedFile] = useState<SelectedFile>(null)
@@ -1197,7 +1199,7 @@ export default function FolderLineagePage() {
     </section>
   )
 
-  const shouldRenderLegacyFlow = selectedFile?.id === '__legacy_flow__'
+  const shouldRenderLegacyFlow = !isMobile && selectedFile?.id === '__legacy_flow__'
 
   if (isLoading) {
     return (
@@ -1263,7 +1265,62 @@ export default function FolderLineagePage() {
         </div>
       </section>
 
-      {renderedFlowSection}
+      {isMobile ? (
+        flow == null ? (
+          <section className="border-2 border-dashed border-foreground bg-card px-4 py-10 text-center shadow-hard">
+            <p className="text-sm font-black">暂无文件级去向数据</p>
+            <p className="mt-2 text-xs font-bold text-muted-foreground">当前仅展示摘要与时间线信息</p>
+          </section>
+        ) : (
+          <section className="space-y-3 border-2 border-foreground bg-card p-3 shadow-hard">
+            <div>
+              <h2 className="text-sm font-black">鐩綍鍒嗙粍鏂囦欢娴佸悜鎽樿</h2>
+              <p className="mt-1 text-[11px] font-bold text-muted-foreground">
+                灏忓睆骞曚互鍗＄墖鎽樿灞曠ず鏉ユ簮銆佺洰鏍囩洰褰曞拰鏄犲皠鍏崇郴锛岄伩鍏嶆í鍚戞粴鍔ㄣ€?
+              </p>
+            </div>
+            <div className="space-y-2 border-2 border-foreground bg-muted/10 p-3">
+              <p className="text-xs font-black text-muted-foreground">婧愮洰褰?</p>
+              <p className="break-all font-mono text-xs font-bold">{flow.source_directory.path || '—'}</p>
+            </div>
+            <div className="space-y-2">
+              {flow.target_directories.map((directory) => {
+                const files = directory.id == null ? [] : (targetFilesByDirectoryID.get(directory.id) ?? [])
+                return (
+                  <div key={directory.id ?? directory.path} className="border-2 border-foreground bg-muted/10 p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-xs font-black">{formatDirectoryTitle(directory, false)}</p>
+                      <span className="rounded-full border border-foreground px-2 py-0.5 text-[10px] font-black">{files.length}</span>
+                    </div>
+                    <p className="mt-1 break-all font-mono text-[11px] font-bold text-muted-foreground">{directory.path || '—'}</p>
+                  </div>
+                )
+              })}
+            </div>
+            <div className="space-y-2 border-2 border-foreground bg-muted/10 p-3">
+              <p className="text-xs font-black text-muted-foreground">鏂囦欢鏄犲皠</p>
+              {links.length === 0 ? (
+                <p className="text-xs font-bold text-muted-foreground">鏆傛棤鏄犲皠鏁版嵁</p>
+              ) : (
+                <ul className="space-y-1">
+                  {links.slice(0, 30).map((link) => {
+                    const sourceFile = sourceFileByID.get(link.source_file_id)
+                    const targetFile = targetFileByID.get(link.target_file_id)
+                    return (
+                      <li key={link.id} className="border border-foreground/30 bg-background px-2 py-1.5 text-[11px] font-bold">
+                        <p className="break-all font-mono text-muted-foreground">{sourceFile?.path || link.source_file_id}</p>
+                        <p className="mt-1 break-all font-mono">{targetFile?.path || link.target_file_id}</p>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+            </div>
+          </section>
+        )
+      ) : (
+        renderedFlowSection
+      )}
 
       {shouldRenderLegacyFlow && (
         flow == null ? (

@@ -122,7 +122,7 @@ func main() {
 	folderHandler.SetOutputChecker(outputValidationSvc)
 	folderHandler.SetLineageReader(folderLineageSvc)
 	folderHandler.SetSourceManifestReader(sourceManifestRepo)
-	jobHandler := handler.NewJobHandlerWithWorkflow(jobRepo, workflowRunnerSvc, configRepo, cfg.SourceDir)
+	jobHandler := handler.NewJobHandlerWithWorkflow(jobRepo, folderRepo, workflowRunnerSvc, configRepo, cfg.SourceDir)
 	snapshotHandler := handler.NewSnapshotHandler(snapshotRepo, snapshotSvc)
 	configHandler := handler.NewConfigHandler(configRepo, nil)
 	auditHandler := handler.NewAuditHandler(auditRepo)
