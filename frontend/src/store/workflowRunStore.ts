@@ -1,4 +1,5 @@
-﻿import { create } from 'zustand'
+﻿import { useMemo } from 'react'
+import { create } from 'zustand'
 
 import { listJobs } from '@/api/jobs'
 import {
@@ -47,6 +48,7 @@ export interface WorkflowRunCardView {
   currentNodeProgressDone?: number
   currentNodeProgressTotal?: number
   currentNodeProgressText: string
+  currentNodeDurationText: string
   progressSourcePath: string
   progressTargetPath: string
   failureSummary: string
@@ -90,6 +92,11 @@ interface WorkflowRunStore {
   buildRunCardView: (workflowDefId: string, totalNodes: number, folderId?: string) => WorkflowRunCardView | null
 }
 
+type WorkflowRunCardViewStateSlice = Pick<
+  WorkflowRunStore,
+  'recentLaunchByScope' | 'runsById' | 'runsByJobId' | 'nodesByRunId' | 'reviewSummaryByRunId'
+>
+
 const RECENT_LAUNCH_STORAGE_KEY = 'classifier-workflow-recent-launch-v2'
 const RUN_REFRESH_DEBOUNCE_MS = 350
 
@@ -98,6 +105,7 @@ const ACTIVE_WORKFLOW_RUN_STATUSES = new Set<WorkflowRunStatus>(['pending', 'run
 const RECENT_BINDING_MAX_AGE_MS = 30 * 1000
 
 const refreshTimers = new Map<string, number>()
+const queuedRunRefreshes = new Set<string>()
 
 function delay(ms: number) {
   return new Promise<void>((resolve) => {
@@ -247,7 +255,11 @@ function chooseCurrentNode(run: WorkflowRun, nodeRuns: NodeRun[]) {
 }
 
 function scheduleRunRefresh(runId: string, runFetch: (runID: string) => Promise<void>) {
-  if (!runId || refreshTimers.has(runId)) return
+  if (!runId) return
+  const existingTimer = refreshTimers.get(runId)
+  if (existingTimer !== undefined) {
+    window.clearTimeout(existingTimer)
+  }
   const timer = window.setTimeout(() => {
     refreshTimers.delete(runId)
     void runFetch(runId)
@@ -259,6 +271,191 @@ function isRecentBindingRecord(record: RecentLaunchRecord) {
   const updatedAtTs = Date.parse(record.updatedAt)
   if (Number.isNaN(updatedAtTs)) return false
   return Date.now() - updatedAtTs <= RECENT_BINDING_MAX_AGE_MS
+}
+
+function formatNodeDuration(startedAt: string | null | undefined, finishedAt: string | null | undefined) {
+  if (!startedAt) return '-'
+  const startTs = Date.parse(startedAt)
+  if (Number.isNaN(startTs)) return '-'
+  const endTs = finishedAt ? Date.parse(finishedAt) : Date.now()
+  if (Number.isNaN(endTs)) return '-'
+
+  const diffMs = Math.max(0, endTs - startTs)
+  if (diffMs < 1000) return '<1 秒'
+  const secs = Math.floor(diffMs / 1000)
+  if (secs < 60) return `${secs} 秒`
+  if (secs < 3600) return `${Math.floor(secs / 60)} 分 ${secs % 60} 秒`
+  return `${Math.floor(secs / 3600)} 小时 ${Math.floor((secs % 3600) / 60)} 分`
+}
+
+function resolveNodeRunIndex(
+  nodeRuns: NodeRun[],
+  nodeID: string,
+  nodeRunID: string,
+  sequence?: number,
+) {
+  if (nodeRunID !== '') {
+    const exactByRunID = nodeRuns.findIndex((nodeRun) => nodeRun.id === nodeRunID)
+    if (exactByRunID !== -1) {
+      return exactByRunID
+    }
+    const placeholderByNode = nodeRuns.findIndex((nodeRun) => (
+      nodeRun.node_id === nodeID
+      && nodeRun.id.trim() === ''
+      && (
+        sequence === undefined
+        || nodeRun.sequence === sequence
+        || nodeRun.sequence === 0
+      )
+    ))
+    if (placeholderByNode !== -1) {
+      return placeholderByNode
+    }
+    return -1
+  }
+
+  if (sequence !== undefined) {
+    const exactBySequence = nodeRuns.findIndex(
+      (nodeRun) => nodeRun.node_id === nodeID && nodeRun.sequence === sequence,
+    )
+    if (exactBySequence !== -1) {
+      return exactBySequence
+    }
+  }
+
+  return nodeRuns.findIndex((nodeRun) => nodeRun.node_id === nodeID)
+}
+
+function buildRunCardViewFromState(
+  state: WorkflowRunCardViewStateSlice,
+  workflowDefId: string,
+  totalNodes: number,
+  folderId?: string,
+): WorkflowRunCardView | null {
+  if (!workflowDefId) return null
+  const record = getRecentLaunchRecord(state.recentLaunchByScope, workflowDefId, folderId)
+  if (!record) return null
+
+  const runID = record.workflowRunId
+  const fromRunID = runID ? state.runsById[runID] : undefined
+  const normalizedFolderId = folderId?.trim() ?? ''
+  const fromRunIDMatchesFolder = !fromRunID
+    || normalizedFolderId === ''
+    || fromRunID.folder_id === normalizedFolderId
+  const scopedRun = fromRunIDMatchesFolder ? fromRunID : undefined
+  const fromJobRuns = (state.runsByJobId[record.jobId] ?? []).find(
+    (run) => run.workflow_def_id === workflowDefId
+      && (normalizedFolderId === '' || run.folder_id === normalizedFolderId),
+  )
+  const run = scopedRun ?? fromJobRuns ?? null
+
+  if (!run) {
+    if (fromRunID && !fromRunIDMatchesFolder) return null
+    if (!isRecentBindingRecord(record)) return null
+    return {
+      workflowDefId,
+      jobId: record.jobId,
+      workflowRunId: record.workflowRunId ?? '',
+      status: 'pending',
+      currentNodeId: '',
+      currentNodeType: '',
+      completedNodes: 0,
+      totalNodes,
+      currentNodeProgressPercent: undefined,
+      currentNodeProgressDone: undefined,
+      currentNodeProgressTotal: undefined,
+      currentNodeProgressText: '等待运行开始',
+      currentNodeDurationText: '-',
+      progressSourcePath: '',
+      progressTargetPath: '',
+      failureSummary: '',
+      reviewProgressText: '等待关联运行记录',
+      pendingReviewCount: 0,
+      isBinding: true,
+    }
+  }
+
+  if (!ACTIVE_WORKFLOW_RUN_STATUSES.has(run.status)) {
+    return null
+  }
+
+  const nodeRuns = state.nodesByRunId[run.id] ?? []
+  const latestNodeRunsByID: Record<string, NodeRun> = {}
+  nodeRuns.forEach((nodeRun) => {
+    const prev = latestNodeRunsByID[nodeRun.node_id]
+    if (!prev || nodeRun.sequence > prev.sequence) {
+      latestNodeRunsByID[nodeRun.node_id] = nodeRun
+    }
+  })
+  const latestNodeRuns = Object.values(latestNodeRunsByID)
+  const currentNode = chooseCurrentNode(run, nodeRuns)
+  const completedNodesRaw = latestNodeRuns.filter((nodeRun) => TERMINAL_NODE_STATUSES.has(nodeRun.status)).length
+  const normalizedTotalNodes = totalNodes > 0 ? totalNodes : Math.max(latestNodeRuns.length, completedNodesRaw)
+  const completedNodes = normalizedTotalNodes > 0 ? Math.min(completedNodesRaw, normalizedTotalNodes) : completedNodesRaw
+
+  const reviewSummary = state.reviewSummaryByRunId[run.id]
+  const reviewProgressText = reviewSummary
+    ? `${reviewSummary.approved + reviewSummary.rolled_back} / ${reviewSummary.total}`
+    : '-'
+  const currentNodeProgressDone = currentNode?.progress_done
+  const currentNodeProgressTotal = currentNode?.progress_total
+  const currentNodeProgressPercent = currentNode?.progress_percent
+  const currentNodeProgressText = currentNode?.progress_stage
+    ?? currentNode?.progress_message
+    ?? (run.status === 'waiting_input' ? '等待人工确认' : '等待节点进度')
+  const currentNodeDurationText = formatNodeDuration(currentNode?.started_at, currentNode?.finished_at)
+
+  const latestFailedNode = [...nodeRuns]
+    .filter((nodeRun) => nodeRun.status === 'failed' && nodeRun.error.trim() !== '')
+    .sort((a, b) => b.sequence - a.sequence)[0]
+
+  return {
+    workflowDefId,
+    jobId: run.job_id,
+    workflowRunId: run.id,
+    status: run.status,
+    currentNodeId: currentNode?.node_id ?? (run.last_node_id?.trim() ?? ''),
+    currentNodeType: currentNode?.node_type ?? '',
+    completedNodes,
+    totalNodes: normalizedTotalNodes,
+    currentNodeProgressPercent,
+    currentNodeProgressDone,
+    currentNodeProgressTotal,
+    currentNodeProgressText,
+    currentNodeDurationText,
+    progressSourcePath: currentNode?.progress_source_path ?? '',
+    progressTargetPath: currentNode?.progress_target_path ?? '',
+    failureSummary: run.error?.trim() || latestFailedNode?.error?.trim() || '',
+    reviewSummary,
+    reviewProgressText,
+    pendingReviewCount: reviewSummary?.pending ?? 0,
+    isBinding: false,
+  }
+}
+
+export function useWorkflowRunCardView(workflowDefId: string, totalNodes: number, folderId?: string) {
+  const recentLaunchByScope = useWorkflowRunStore((state) => state.recentLaunchByScope)
+  const runsById = useWorkflowRunStore((state) => state.runsById)
+  const runsByJobId = useWorkflowRunStore((state) => state.runsByJobId)
+  const nodesByRunId = useWorkflowRunStore((state) => state.nodesByRunId)
+  const reviewSummaryByRunId = useWorkflowRunStore((state) => state.reviewSummaryByRunId)
+
+  return useMemo(() => buildRunCardViewFromState({
+    recentLaunchByScope,
+    runsById,
+    runsByJobId,
+    nodesByRunId,
+    reviewSummaryByRunId,
+  }, workflowDefId, totalNodes, folderId), [
+    folderId,
+    nodesByRunId,
+    recentLaunchByScope,
+    reviewSummaryByRunId,
+    runsById,
+    runsByJobId,
+    totalNodes,
+    workflowDefId,
+  ])
 }
 
 const initialRecentLaunches = loadRecentLaunches()
@@ -327,7 +524,11 @@ export const useWorkflowRunStore = create<WorkflowRunStore>((set, get) => ({
   },
 
   async fetchRunDetail(runId) {
-    if (!runId || get().fetchingRunIds.has(runId)) return
+    if (!runId) return
+    if (get().fetchingRunIds.has(runId)) {
+      queuedRunRefreshes.add(runId)
+      return
+    }
     set((state) => ({ fetchingRunIds: new Set([...state.fetchingRunIds, runId]) }))
     try {
       const response = await getWorkflowRunDetail(runId)
@@ -372,6 +573,10 @@ export const useWorkflowRunStore = create<WorkflowRunStore>((set, get) => ({
       set((state) => ({
         fetchingRunIds: new Set([...state.fetchingRunIds].filter((id) => id !== runId)),
       }))
+    } finally {
+      if (queuedRunRefreshes.delete(runId)) {
+        void get().fetchRunDetail(runId)
+      }
     }
   },
 
@@ -631,13 +836,15 @@ export const useWorkflowRunStore = create<WorkflowRunStore>((set, get) => ({
 
   handleNodeEvent(event) {
     const workflowRunID = event.workflow_run_id
+    const nodeRunID = event.node_run_id?.trim() ?? ''
     const nodeID = event.node_id
     const nodeType = event.node_type
+    const sequence = typeof event.sequence === 'number' ? event.sequence : undefined
     const status: NodeRunStatus = event.error ? 'failed' : (event.status ?? 'running')
 
     set((state) => {
       const existing = state.nodesByRunId[workflowRunID] ?? []
-      const idx = existing.findIndex((nodeRun) => nodeRun.node_id === nodeID)
+      const idx = resolveNodeRunIndex(existing, nodeID, nodeRunID, sequence)
 
       const now = new Date().toISOString()
       let updatedNodes: NodeRun[]
@@ -647,7 +854,9 @@ export const useWorkflowRunStore = create<WorkflowRunStore>((set, get) => ({
           const terminal = status !== 'running'
           return {
             ...nodeRun,
+            id: nodeRun.id.trim() === '' && nodeRunID !== '' ? nodeRunID : nodeRun.id,
             node_type: (nodeType as NodeType) || nodeRun.node_type,
+            sequence: sequence ?? nodeRun.sequence,
             status,
             error: event.error ?? nodeRun.error,
             progress_percent: terminal ? 100 : nodeRun.progress_percent,
@@ -658,11 +867,11 @@ export const useWorkflowRunStore = create<WorkflowRunStore>((set, get) => ({
         })
       } else {
         const placeholder: NodeRun = {
-          id: '',
+          id: nodeRunID,
           workflow_run_id: workflowRunID,
           node_id: nodeID,
           node_type: nodeType as NodeType,
-          sequence: 0,
+          sequence: sequence ?? 0,
           status,
           input_json: '',
           output_json: '',
@@ -685,18 +894,15 @@ export const useWorkflowRunStore = create<WorkflowRunStore>((set, get) => ({
 
   handleNodeProgress(event) {
     const workflowRunID = event.workflow_run_id
-    const nodeRunID = event.node_run_id ?? ''
+    const nodeRunID = event.node_run_id?.trim() ?? ''
     const nodeID = event.node_id
     const nodeType = event.node_type
+    const sequence = typeof event.sequence === 'number' ? event.sequence : undefined
     if (!workflowRunID || !nodeID) return
 
     set((state) => {
       const existing = state.nodesByRunId[workflowRunID] ?? []
-      const idxByRunID = nodeRunID
-        ? existing.findIndex((nodeRun) => nodeRun.id === nodeRunID)
-        : -1
-      const idxByNodeID = existing.findIndex((nodeRun) => nodeRun.node_id === nodeID)
-      const idx = idxByRunID !== -1 ? idxByRunID : idxByNodeID
+      const idx = resolveNodeRunIndex(existing, nodeID, nodeRunID, sequence)
       const now = event.progress_updated_at ?? new Date().toISOString()
 
       if (idx !== -1) {
@@ -704,7 +910,9 @@ export const useWorkflowRunStore = create<WorkflowRunStore>((set, get) => ({
           if (index !== idx) return nodeRun
           return {
             ...nodeRun,
+            id: nodeRun.id.trim() === '' && nodeRunID !== '' ? nodeRunID : nodeRun.id,
             node_type: (nodeType as NodeType) || nodeRun.node_type,
+            sequence: sequence ?? nodeRun.sequence,
             status: nodeRun.status === 'pending' ? 'running' : nodeRun.status,
             progress_percent: event.percent ?? nodeRun.progress_percent,
             progress_done: event.done ?? nodeRun.progress_done,
@@ -727,7 +935,7 @@ export const useWorkflowRunStore = create<WorkflowRunStore>((set, get) => ({
         workflow_run_id: workflowRunID,
         node_id: nodeID,
         node_type: nodeType as NodeType,
-        sequence: 0,
+        sequence: sequence ?? 0,
         status: 'running',
         input_json: '',
         output_json: '',
@@ -751,100 +959,6 @@ export const useWorkflowRunStore = create<WorkflowRunStore>((set, get) => ({
   },
 
   buildRunCardView(workflowDefId, totalNodes, folderId) {
-    const record = getRecentLaunchRecord(get().recentLaunchByScope, workflowDefId, folderId)
-    if (!record) return null
-
-    const runID = record.workflowRunId
-    const fromRunID = runID ? get().runsById[runID] : undefined
-    const normalizedFolderId = folderId?.trim() ?? ''
-    const fromRunIDMatchesFolder = !fromRunID
-      || normalizedFolderId === ''
-      || fromRunID.folder_id === normalizedFolderId
-    const scopedRun = fromRunIDMatchesFolder ? fromRunID : undefined
-    const fromJobRuns = (get().runsByJobId[record.jobId] ?? []).find(
-      (run) => run.workflow_def_id === workflowDefId
-        && (normalizedFolderId === '' || run.folder_id === normalizedFolderId),
-    )
-    const run = scopedRun ?? fromJobRuns ?? null
-
-    if (!run) {
-      if (fromRunID && !fromRunIDMatchesFolder) return null
-      if (!isRecentBindingRecord(record)) return null
-      return {
-        workflowDefId,
-        jobId: record.jobId,
-        workflowRunId: record.workflowRunId ?? '',
-        status: 'pending',
-        currentNodeId: '',
-        currentNodeType: '',
-        completedNodes: 0,
-        totalNodes,
-        currentNodeProgressPercent: undefined,
-        currentNodeProgressDone: undefined,
-        currentNodeProgressTotal: undefined,
-        currentNodeProgressText: '等待运行开始',
-        progressSourcePath: '',
-        progressTargetPath: '',
-        failureSummary: '',
-        reviewProgressText: '等待关联运行记录',
-        pendingReviewCount: 0,
-        isBinding: true,
-      }
-    }
-
-    if (!ACTIVE_WORKFLOW_RUN_STATUSES.has(run.status)) {
-      return null
-    }
-
-    const nodeRuns = get().nodesByRunId[run.id] ?? []
-    const latestNodeRunsByID: Record<string, NodeRun> = {}
-    nodeRuns.forEach((nodeRun) => {
-      const prev = latestNodeRunsByID[nodeRun.node_id]
-      if (!prev || nodeRun.sequence > prev.sequence) {
-        latestNodeRunsByID[nodeRun.node_id] = nodeRun
-      }
-    })
-    const latestNodeRuns = Object.values(latestNodeRunsByID)
-    const currentNode = chooseCurrentNode(run, nodeRuns)
-    const completedNodesRaw = latestNodeRuns.filter((nodeRun) => TERMINAL_NODE_STATUSES.has(nodeRun.status)).length
-    const normalizedTotalNodes = totalNodes > 0 ? totalNodes : Math.max(latestNodeRuns.length, completedNodesRaw)
-    const completedNodes = normalizedTotalNodes > 0 ? Math.min(completedNodesRaw, normalizedTotalNodes) : completedNodesRaw
-
-    const reviewSummary = get().reviewSummaryByRunId[run.id]
-    const reviewProgressText = reviewSummary
-      ? `${reviewSummary.approved + reviewSummary.rolled_back} / ${reviewSummary.total}`
-      : '-'
-    const currentNodeProgressDone = currentNode?.progress_done
-    const currentNodeProgressTotal = currentNode?.progress_total
-    const currentNodeProgressPercent = currentNode?.progress_percent
-    const currentNodeProgressText = currentNode?.progress_stage
-      ?? currentNode?.progress_message
-      ?? (run.status === 'waiting_input' ? '等待人工确认' : '等待节点进度')
-
-    const latestFailedNode = [...nodeRuns]
-      .filter((nodeRun) => nodeRun.status === 'failed' && nodeRun.error.trim() !== '')
-      .sort((a, b) => b.sequence - a.sequence)[0]
-
-    return {
-      workflowDefId,
-      jobId: run.job_id,
-      workflowRunId: run.id,
-      status: run.status,
-      currentNodeId: currentNode?.node_id ?? (run.last_node_id?.trim() ?? ''),
-      currentNodeType: currentNode?.node_type ?? '',
-      completedNodes,
-      totalNodes: normalizedTotalNodes,
-      currentNodeProgressPercent,
-      currentNodeProgressDone,
-      currentNodeProgressTotal,
-      currentNodeProgressText,
-      progressSourcePath: currentNode?.progress_source_path ?? '',
-      progressTargetPath: currentNode?.progress_target_path ?? '',
-      failureSummary: run.error?.trim() || latestFailedNode?.error?.trim() || '',
-      reviewSummary,
-      reviewProgressText,
-      pendingReviewCount: reviewSummary?.pending ?? 0,
-      isBinding: false,
-    }
+    return buildRunCardViewFromState(get(), workflowDefId, totalNodes, folderId)
   },
 }))

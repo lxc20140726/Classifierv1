@@ -28,7 +28,7 @@ import { useActivityStore } from '@/store/activityStore'
 import { useFolderStore } from '@/store/folderStore'
 import { useJobStore } from '@/store/jobStore'
 import { useWorkflowDefStore } from '@/store/workflowDefStore'
-import { useWorkflowRunStore } from '@/store/workflowRunStore'
+import { useWorkflowRunCardView, useWorkflowRunStore } from '@/store/workflowRunStore'
 import type { Category, Folder, FolderStatus, Job, WorkflowGraph, WorkflowStageStatus } from '@/types'
 
 type SortableFolderColumn = 'updated_at' | 'total_size'
@@ -722,7 +722,6 @@ export default function FolderListPage() {
   const bindLatestLaunch = useWorkflowRunStore((s) => s.bindLatestLaunch)
   const bindLatestLaunchForFolders = useWorkflowRunStore((s) => s.bindLatestLaunchForFolders)
   const restoreLatestLaunch = useWorkflowRunStore((s) => s.restoreLatestLaunch)
-  const buildRunCardView = useWorkflowRunStore((s) => s.buildRunCardView)
   const approveAllPendingReviews = useWorkflowRunStore((s) => s.approveAllPendingReviews)
   const rollbackAllPendingReviews = useWorkflowRunStore((s) => s.rollbackAllPendingReviews)
   const jobs = useJobStore((s) => s.jobs)
@@ -878,13 +877,12 @@ export default function FolderListPage() {
     }
   }
 
-  const launchCardView = selectedWorkflowDef && launchDialog.folderIds.length === 1
-    ? buildRunCardView(
-      selectedWorkflowDef.id,
-      countEnabledNodes(selectedWorkflowDef.graph_json),
-      launchDialog.folderIds[0],
-    )
-    : null
+  const launchCardViewRaw = useWorkflowRunCardView(
+    selectedWorkflowDef?.id ?? '',
+    selectedWorkflowDef ? countEnabledNodes(selectedWorkflowDef.graph_json) : 0,
+    launchDialog.folderIds.length === 1 ? launchDialog.folderIds[0] : undefined,
+  )
+  const launchCardView = launchDialog.folderIds.length === 1 ? launchCardViewRaw : null
 
   const launchBatchJob = launchSuccessJobId
     ? jobs.find((job) => job.id === launchSuccessJobId) ?? null

@@ -448,6 +448,7 @@ export interface WorkflowNodeEvent {
   job_id: string
   workflow_run_id: string
   node_run_id?: string
+  sequence?: number
   folder_id?: string
   node_id: string
   node_type: string

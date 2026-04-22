@@ -46,6 +46,9 @@ export function WorkflowRunStatusCard({
   const progressPercent = typeof view.currentNodeProgressPercent === 'number'
     ? Math.max(0, Math.min(100, view.currentNodeProgressPercent))
     : 0
+  const progressPercentText = typeof view.currentNodeProgressPercent === 'number'
+    ? `${Math.round(progressPercent)}%`
+    : '-'
 
   return (
     <div className={cn('border-2 border-foreground bg-background p-3 shadow-hard', className)}>
@@ -79,13 +82,24 @@ export function WorkflowRunStatusCard({
             <div className="flex items-start justify-between gap-3">
               <span className="font-black text-muted-foreground">节点进度</span>
               <span className="font-black tabular-nums">
-                {view.currentNodeProgressDone ?? '-'} / {view.currentNodeProgressTotal ?? '-'}
+                {view.currentNodeProgressDone ?? '-'} / {view.currentNodeProgressTotal ?? '-'} · {progressPercentText}
               </span>
             </div>
             <div className="h-2 w-full overflow-hidden border-2 border-foreground bg-muted">
-              <div className="h-full bg-foreground transition-all duration-300" style={{ width: `${progressPercent}%` }} />
+              <svg
+                className="h-full w-full"
+                viewBox="0 0 100 8"
+                preserveAspectRatio="none"
+                role="img"
+                aria-label={`节点进度 ${progressPercentText}`}
+              >
+                <rect x="0" y="0" width={progressPercent} height="8" className="fill-foreground transition-all duration-300" />
+              </svg>
             </div>
-            <p className="text-[11px] font-bold text-muted-foreground">{view.currentNodeProgressText}</p>
+            <div className="flex items-start justify-between gap-3 text-[11px] font-bold text-muted-foreground">
+              <p className="min-w-0 break-all">{view.currentNodeProgressText}</p>
+              <p className="shrink-0 tabular-nums">耗时 {view.currentNodeDurationText}</p>
+            </div>
             {view.progressSourcePath && (
               <p className="truncate font-mono text-[10px] text-muted-foreground" title={view.progressSourcePath}>
                 源：{view.progressSourcePath}

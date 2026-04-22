@@ -922,14 +922,6 @@ type nodeExecutionResult struct {
 	Reason  string
 }
 
-const workflowNodeProgressMinInterval = 1200 * time.Millisecond
-
-type nodeProgressReporter struct {
-	lastPercent int
-	lastEmitAt  time.Time
-	emittedOnce bool
-}
-
 func normalizeNodeProgressUpdate(update NodeProgressUpdate) NodeProgressUpdate {
 	if update.Percent < 0 {
 		update.Percent = 0
@@ -951,22 +943,6 @@ func normalizeNodeProgressUpdate(update NodeProgressUpdate) NodeProgressUpdate {
 		update.Done = update.Total
 	}
 	return update
-}
-
-func (r *nodeProgressReporter) shouldEmit(percent int) bool {
-	if !r.emittedOnce {
-		return true
-	}
-	if percent != r.lastPercent {
-		return true
-	}
-	return time.Since(r.lastEmitAt) >= workflowNodeProgressMinInterval
-}
-
-func (r *nodeProgressReporter) markEmitted(percent int) {
-	r.emittedOnce = true
-	r.lastPercent = percent
-	r.lastEmitAt = time.Now()
 }
 
 func (s *WorkflowRunnerService) executeWorkflowNode(
@@ -1051,6 +1027,7 @@ func (s *WorkflowRunnerService) executeWorkflowNode(
 			"node_run_id":     nodeRun.ID,
 			"node_id":         node.ID,
 			"node_type":       node.Type,
+			"sequence":        nodeRun.Sequence,
 			"error":           failureMessage,
 			"error_code":      errCode,
 		})
@@ -1141,21 +1118,19 @@ func (s *WorkflowRunnerService) executeWorkflowNode(
 			"node_run_id":     nodeRun.ID,
 			"node_id":         node.ID,
 			"node_type":       node.Type,
+			"sequence":        nodeRun.Sequence,
 			"error":           err.Error(),
 		})
 		s.publishFolderClassificationUpdated(ctx, run, "failed", node.ID, node.Type, err.Error())
 		return nodeExecutionResult{Err: err, NodeID: node.ID, Reason: err.Error()}
 	}
 
-	progressReporter := &nodeProgressReporter{}
-	publishProgress := func(update NodeProgressUpdate, force bool) {
+	var progressMu sync.Mutex
+	publishProgress := func(update NodeProgressUpdate) {
+		progressMu.Lock()
+		defer progressMu.Unlock()
+
 		normalized := normalizeNodeProgressUpdate(update)
-		if !force {
-			if !progressReporter.shouldEmit(normalized.Percent) {
-				return
-			}
-		}
-		progressReporter.markEmitted(normalized.Percent)
 
 		s.updateNodeRunProgress(ctx, nodeRun.ID, repository.NodeRunProgress{
 			Percent:    normalized.Percent,
@@ -1173,6 +1148,7 @@ func (s *WorkflowRunnerService) executeWorkflowNode(
 			"node_run_id":         nodeRun.ID,
 			"node_id":             node.ID,
 			"node_type":           node.Type,
+			"sequence":            nodeRun.Sequence,
 			"percent":             normalized.Percent,
 			"done":                normalized.Done,
 			"total":               normalized.Total,
@@ -1193,7 +1169,7 @@ func (s *WorkflowRunnerService) executeWorkflowNode(
 		AppConfig:   appConfig,
 		Inputs:      inputs,
 		ProgressFn: func(update NodeProgressUpdate) {
-			publishProgress(update, false)
+			publishProgress(update)
 		},
 	}
 
@@ -1217,6 +1193,7 @@ func (s *WorkflowRunnerService) executeWorkflowNode(
 			"node_run_id":     nodeRun.ID,
 			"node_id":         node.ID,
 			"node_type":       node.Type,
+			"sequence":        nodeRun.Sequence,
 			"error":           execErr.Error(),
 		})
 		s.publishFolderClassificationUpdated(ctx, run, "failed", node.ID, node.Type, execErr.Error())
@@ -1247,6 +1224,7 @@ func (s *WorkflowRunnerService) executeWorkflowNode(
 				"node_run_id":     nodeRun.ID,
 				"node_id":         node.ID,
 				"node_type":       node.Type,
+				"sequence":        nodeRun.Sequence,
 				"error":           finalMsg,
 				"error_code":      code,
 			})
@@ -1307,6 +1285,7 @@ func (s *WorkflowRunnerService) executeWorkflowNode(
 			"node_run_id":     nodeRun.ID,
 			"node_id":         node.ID,
 			"node_type":       node.Type,
+			"sequence":        nodeRun.Sequence,
 			"error":           execOutput.PendingReason,
 		})
 		s.publishFolderClassificationUpdated(ctx, run, "waiting_input", node.ID, node.Type, execOutput.PendingReason)
@@ -1331,6 +1310,7 @@ func (s *WorkflowRunnerService) executeWorkflowNode(
 			"node_run_id":     nodeRun.ID,
 			"node_id":         node.ID,
 			"node_type":       node.Type,
+			"sequence":        nodeRun.Sequence,
 			"error":           errMsg,
 			"error_code":      execOutput.ErrorCode,
 		})
@@ -1348,7 +1328,7 @@ func (s *WorkflowRunnerService) executeWorkflowNode(
 		Total:   1,
 		Stage:   "completed",
 		Message: "鑺傜偣鎵ц瀹屾垚",
-	}, true)
+	})
 
 	if err := s.nodeRuns.UpdateFinish(ctx, nodeRun.ID, "succeeded", string(outputJSON), ""); err != nil {
 		reason := fmt.Sprintf("update finish for node run %q: %v", nodeRun.ID, err)

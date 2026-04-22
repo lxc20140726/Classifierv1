@@ -222,7 +222,6 @@ func (e *compressNodeExecutor) Execute(ctx context.Context, input NodeExecutionI
 					mu.Lock()
 					doneFiles++
 					currentDone := doneFiles
-					mu.Unlock()
 					if input.ProgressFn != nil {
 						percent := currentDone * 100 / totalFiles
 						input.ProgressFn(NodeProgressUpdate{
@@ -235,6 +234,7 @@ func (e *compressNodeExecutor) Execute(ctx context.Context, input NodeExecutionI
 							TargetPath: normalizeWorkflowPath(archivePath),
 						})
 					}
+					mu.Unlock()
 				})
 				unlock()
 				if err != nil {

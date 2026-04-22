@@ -91,3 +91,85 @@ func TestCompressNodeUsesStoreAndReportsFileProgress(t *testing.T) {
 		t.Fatalf("last progress = %+v, want percent=100 done=2 total=2", last)
 	}
 }
+
+func TestCompressNodeReportsMonotonicDoneUnderParallelWorkers(t *testing.T) {
+	t.Setenv("COMPRESS_MAX_PARALLEL", "4")
+	sourceRoot := t.TempDir()
+	firstSourceDir := filepath.Join(sourceRoot, "gallery-a")
+	secondSourceDir := filepath.Join(sourceRoot, "gallery-b")
+	targetDir := filepath.Join(sourceRoot, "out")
+	if err := os.MkdirAll(firstSourceDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(firstSourceDir) error = %v", err)
+	}
+	if err := os.MkdirAll(secondSourceDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(secondSourceDir) error = %v", err)
+	}
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(targetDir) error = %v", err)
+	}
+
+	for _, name := range []string{"a1.jpg", "a2.jpg", "a3.png"} {
+		if err := os.WriteFile(filepath.Join(firstSourceDir, name), []byte(name), 0o644); err != nil {
+			t.Fatalf("WriteFile(%s) error = %v", name, err)
+		}
+	}
+	for _, name := range []string{"b1.jpg", "b2.png", "b3.webp"} {
+		if err := os.WriteFile(filepath.Join(secondSourceDir, name), []byte(name), 0o644); err != nil {
+			t.Fatalf("WriteFile(%s) error = %v", name, err)
+		}
+	}
+
+	executor := newCompressNodeExecutor(fs.NewOSAdapter())
+	var updates []NodeProgressUpdate
+	_, err := executor.Execute(context.Background(), NodeExecutionInput{
+		Node: repository.WorkflowGraphNode{
+			ID:     "compress-1",
+			Type:   compressNodeExecutorType,
+			Label:  "压缩节点",
+			Config: map[string]any{"format": "cbz", "scope": "all", "target_dir": targetDir},
+		},
+		Inputs: map[string]*TypedValue{
+			"items": {
+				Type: PortTypeProcessingItemList,
+				Value: []ProcessingItem{
+					{
+						CurrentPath: firstSourceDir,
+						SourcePath:  firstSourceDir,
+						FolderID:    "folder-a",
+						SourceKind:  ProcessingItemSourceKindDirectory,
+					},
+					{
+						CurrentPath: secondSourceDir,
+						SourcePath:  secondSourceDir,
+						FolderID:    "folder-b",
+						SourceKind:  ProcessingItemSourceKindDirectory,
+					},
+				},
+			},
+		},
+		ProgressFn: func(update NodeProgressUpdate) {
+			updates = append(updates, update)
+		},
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	if len(updates) == 0 {
+		t.Fatalf("progress updates is empty")
+	}
+	lastDone := -1
+	final := updates[len(updates)-1]
+	for _, update := range updates {
+		if update.Stage != "writing" {
+			continue
+		}
+		if update.Done < lastDone {
+			t.Fatalf("progress done is not monotonic: prev=%d current=%d", lastDone, update.Done)
+		}
+		lastDone = update.Done
+	}
+	if final.Done != 6 || final.Total != 6 || final.Percent != 100 {
+		t.Fatalf("final progress = %+v, want done=6 total=6 percent=100", final)
+	}
+}

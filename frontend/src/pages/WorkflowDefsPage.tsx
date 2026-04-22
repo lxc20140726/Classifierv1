@@ -12,7 +12,7 @@ import {
   launchWorkflowForFolder,
 } from '@/lib/workflowFolderLaunch'
 import { cn } from '@/lib/utils'
-import { useWorkflowRunStore } from '@/store/workflowRunStore'
+import { useWorkflowRunCardView, useWorkflowRunStore } from '@/store/workflowRunStore'
 import { useWorkflowDefStore } from '@/store/workflowDefStore'
 import type { Folder, WorkflowDefinition, WorkflowGraph } from '@/types'
 
@@ -92,7 +92,7 @@ export default function WorkflowDefsPage(_props: WorkflowDefsPageProps) {
   const isMobile = useIsMobile(1024)
   const { defs, isLoading, error, fetchDefs, createDef, updateDef, deleteDef, setActive } =
     useWorkflowDefStore()
-  const { bindLatestLaunch, restoreLatestLaunch, buildRunCardView } = useWorkflowRunStore()
+  const { bindLatestLaunch, restoreLatestLaunch } = useWorkflowRunStore()
 
   const [modal, setModal] = useState<ModalMode | null>(null)
   const [createStep, setCreateStep] = useState<CreateStep>('pick-template')
@@ -293,13 +293,11 @@ export default function WorkflowDefsPage(_props: WorkflowDefsPageProps) {
     }
   }
 
-  const launchCardView = currentLaunchDef
-    ? buildRunCardView(
-      currentLaunchDef.id,
-      countEnabledNodes(currentLaunchDef.graph_json),
-      selectedFolderId || undefined,
-    )
-    : null
+  const launchCardView = useWorkflowRunCardView(
+    currentLaunchDef?.id ?? '',
+    currentLaunchDef ? countEnabledNodes(currentLaunchDef.graph_json) : 0,
+    selectedFolderId || undefined,
+  )
 
   return (
     <section className="mx-auto max-w-5xl px-6 py-8">

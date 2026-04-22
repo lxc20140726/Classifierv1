@@ -14,22 +14,31 @@ type Event struct {
 	Data []byte
 }
 
+type brokerClient struct {
+	events chan Event
+	done   chan struct{}
+}
+
 type Broker struct {
 	mu      sync.RWMutex
-	clients map[chan Event]struct{}
+	clients map[chan Event]*brokerClient
 }
 
 func NewBroker() *Broker {
 	return &Broker{
-		clients: make(map[chan Event]struct{}),
+		clients: make(map[chan Event]*brokerClient),
 	}
 }
 
 func (b *Broker) Subscribe() chan Event {
 	ch := make(chan Event, 16)
+	client := &brokerClient{
+		events: ch,
+		done:   make(chan struct{}),
+	}
 
 	b.mu.Lock()
-	b.clients[ch] = struct{}{}
+	b.clients[ch] = client
 	b.mu.Unlock()
 
 	return ch
@@ -37,9 +46,9 @@ func (b *Broker) Subscribe() chan Event {
 
 func (b *Broker) Unsubscribe(ch chan Event) {
 	b.mu.Lock()
-	if _, ok := b.clients[ch]; ok {
+	if client, ok := b.clients[ch]; ok {
 		delete(b.clients, ch)
-		close(ch)
+		close(client.done)
 	}
 	b.mu.Unlock()
 }
@@ -56,13 +65,24 @@ func (b *Broker) Publish(eventType string, payload any) error {
 	}
 
 	b.mu.RLock()
-	for ch := range b.clients {
-		select {
-		case ch <- evt:
-		default:
-		}
+	clients := make([]*brokerClient, 0, len(b.clients))
+	for _, client := range b.clients {
+		clients = append(clients, client)
 	}
 	b.mu.RUnlock()
+
+	for _, client := range clients {
+		select {
+		case <-client.done:
+			continue
+		default:
+		}
+
+		select {
+		case <-client.done:
+		case client.events <- evt:
+		}
+	}
 
 	return nil
 }

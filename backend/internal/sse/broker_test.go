@@ -39,9 +39,11 @@ func TestBrokerUnsubscribeClosesChannel(t *testing.T) {
 
 	b.Unsubscribe(ch)
 
-	_, ok := <-ch
-	if ok {
-		t.Fatal("channel should be closed after Unsubscribe")
+	b.mu.RLock()
+	_, exists := b.clients[ch]
+	b.mu.RUnlock()
+	if exists {
+		t.Fatal("client should be removed after Unsubscribe")
 	}
 }
 
@@ -53,7 +55,7 @@ func TestBrokerPublishNoSubscribers(t *testing.T) {
 	}
 }
 
-func TestBrokerPublishDropsOnFullBufferWithoutBlocking(t *testing.T) {
+func TestBrokerPublishBlocksOnFullBufferUntilConsumerDrains(t *testing.T) {
 	b := NewBroker()
 	ch := b.Subscribe()
 	defer b.Unsubscribe(ch)
@@ -64,12 +66,30 @@ func TestBrokerPublishDropsOnFullBufferWithoutBlocking(t *testing.T) {
 		}
 	}
 
-	start := time.Now()
-	if err := b.Publish("drop", map[string]any{"i": 16}); err != nil {
-		t.Fatalf("Publish() drop error = %v", err)
+	done := make(chan error, 1)
+	go func() {
+		done <- b.Publish("block", map[string]any{"i": 16})
+	}()
+
+	select {
+	case err := <-done:
+		t.Fatalf("Publish() should block on full buffer, got err=%v", err)
+	case <-time.After(80 * time.Millisecond):
 	}
-	if time.Since(start) > 100*time.Millisecond {
-		t.Fatalf("Publish() appears to block on full buffer, duration = %v", time.Since(start))
+
+	select {
+	case <-ch:
+	case <-time.After(1 * time.Second):
+		t.Fatal("timed out waiting to drain one event")
+	}
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Publish() block error = %v", err)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("Publish() did not unblock after consumer drained")
 	}
 
 	count := 0
@@ -85,6 +105,29 @@ func TestBrokerPublishDropsOnFullBufferWithoutBlocking(t *testing.T) {
 
 	if count != 16 {
 		t.Fatalf("drained %d events, want 16", count)
+	}
+}
+
+func TestBrokerPublishSkipsUnsubscribedClientWithoutDeadlock(t *testing.T) {
+	b := NewBroker()
+	ch := b.Subscribe()
+	b.Unsubscribe(ch)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 50; i++ {
+			if err := b.Publish("noop", map[string]any{"i": i}); err != nil {
+				t.Errorf("Publish() error = %v", err)
+				return
+			}
+		}
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(1 * time.Second):
+		t.Fatal("Publish() deadlocked on unsubscribed client")
 	}
 }
 

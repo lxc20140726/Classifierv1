@@ -44,7 +44,7 @@ import { listNodeTypes } from '@/api/nodeTypes'
 import { getWorkflowDef, updateWorkflowDef } from '@/api/workflowDefs'
 import { cn } from '@/lib/utils'
 import { useThemeStore } from '@/store/themeStore'
-import { useWorkflowRunStore } from '@/store/workflowRunStore'
+import { useWorkflowRunCardView, useWorkflowRunStore } from '@/store/workflowRunStore'
 import { ClassificationPreviewInline } from '@/components/workflow-preview/ClassificationPreviewInline'
 import { ProcessingPreviewInline } from '@/components/workflow-preview/ProcessingPreviewInline'
 import { isClassificationSummary, isProcessingSummary, parseNodePreviewSummary } from '@/components/workflow-preview/previewUtils'
@@ -1640,7 +1640,6 @@ function WorkflowEditorScreen() {
   const runsByJobId = useWorkflowRunStore((s) => s.runsByJobId)
   const bindLatestLaunch = useWorkflowRunStore((s) => s.bindLatestLaunch)
   const restoreLatestLaunch = useWorkflowRunStore((s) => s.restoreLatestLaunch)
-  const buildRunCardView = useWorkflowRunStore((s) => s.buildRunCardView)
   const fetchRunsForJob = useWorkflowRunStore((s) => s.fetchRunsForJob)
   const fetchRunDetail = useWorkflowRunStore((s) => s.fetchRunDetail)
   const rollbackRun = useWorkflowRunStore((s) => s.rollbackRun)
@@ -1708,7 +1707,7 @@ function WorkflowEditorScreen() {
     () => Object.values(workflowNodes).filter((node) => node.enabled !== false).length,
     [workflowNodes],
   )
-  const editorRunCardView = workflowDefId ? buildRunCardView(workflowDefId, enabledNodeCount) : null
+  const editorRunCardView = useWorkflowRunCardView(workflowDefId, enabledNodeCount)
 
   useEffect(() => {
     if (!activeRunIdsKey) return
