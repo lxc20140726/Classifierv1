@@ -162,8 +162,8 @@ func (e *thumbnailNodeExecutor) Execute(ctx context.Context, input NodeExecution
 	stepResults := make([]ProcessingStepResult, 0, len(tasks))
 	coverByFolderID := map[string]string{}
 	var stepMu sync.Mutex
-	var firstErr error
 	done := 0
+	failed := 0
 	total := len(tasks)
 
 	for _, task := range tasks {
@@ -177,13 +177,30 @@ func (e *thumbnailNodeExecutor) Execute(ctx context.Context, input NodeExecution
 		args := thumbnailNodeBuildArgs(task.videoSource.Path, task.thumbnailPath, offsetSeconds, width)
 		combined, err := e.runFFmpeg(ctx, ffmpegPath, args...)
 		e.releaseFFmpegSlot()
+		done++
 		if err != nil {
-			firstErr = fmt.Errorf("%s.Execute: ffmpeg failed for %q -> %q: %w: %s", e.Type(), task.videoSource.Path, task.thumbnailPath, err, strings.TrimSpace(string(combined)))
-			break
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return NodeExecutionOutput{}, fmt.Errorf("%s.Execute: %w", e.Type(), ctxErr)
+			}
+			failed++
+			stepMu.Lock()
+			stepResults = append(stepResults, ProcessingStepResult{
+				FolderID:   strings.TrimSpace(task.item.FolderID),
+				SourcePath: normalizeWorkflowPath(task.videoSource.Path),
+				TargetPath: normalizeWorkflowPath(task.thumbnailPath),
+				NodeType:   input.Node.Type,
+				NodeLabel:  strings.TrimSpace(input.Node.Label),
+				Status:     "failed",
+				Error:      thumbnailNodeFormatFFmpegError(err, combined),
+			})
+			stepMu.Unlock()
+			if input.ProgressFn != nil {
+				input.ProgressFn(thumbnailNodeProgressUpdate(done, total, failed, task.videoSource.Path, task.thumbnailPath, false))
+			}
+			continue
 		}
 
 		stepMu.Lock()
-		done++
 		stepResults = append(stepResults, ProcessingStepResult{
 			FolderID:   strings.TrimSpace(task.item.FolderID),
 			SourcePath: normalizeWorkflowPath(task.videoSource.Path),
@@ -198,22 +215,9 @@ func (e *thumbnailNodeExecutor) Execute(ctx context.Context, input NodeExecution
 		stepMu.Unlock()
 
 		if input.ProgressFn != nil {
-			percent := done * 100 / total
-			input.ProgressFn(NodeProgressUpdate{
-				Percent:    percent,
-				Done:       done,
-				Total:      total,
-				Stage:      "generating_thumbnails",
-				Message:    fmt.Sprintf("已生成 %d/%d 张缩略图", done, total),
-				SourcePath: normalizeWorkflowPath(task.videoSource.Path),
-				TargetPath: normalizeWorkflowPath(task.thumbnailPath),
-			})
+			input.ProgressFn(thumbnailNodeProgressUpdate(done, total, failed, task.videoSource.Path, task.thumbnailPath, true))
 		}
 	}
-	if firstErr != nil {
-		return NodeExecutionOutput{}, firstErr
-	}
-
 	if e.folders != nil {
 		for folderID, coverThumbnailPath := range coverByFolderID {
 			if err := e.folders.UpdateCoverImagePath(ctx, folderID, coverThumbnailPath); err != nil {
@@ -275,6 +279,43 @@ func (e *thumbnailNodeExecutor) Rollback(ctx context.Context, input NodeRollback
 	}
 
 	return nil
+}
+
+func thumbnailNodeFormatFFmpegError(err error, combined []byte) string {
+	if err == nil {
+		return ""
+	}
+	message := strings.TrimSpace(err.Error())
+	output := strings.TrimSpace(string(combined))
+	if output == "" {
+		return message
+	}
+	if message == "" {
+		return output
+	}
+	return message + ": " + output
+}
+
+func thumbnailNodeProgressUpdate(done, total, failed int, videoPath, thumbnailPath string, succeeded bool) NodeProgressUpdate {
+	percent := done * 100 / total
+	message := fmt.Sprintf("\u5df2\u751f\u6210 %d/%d \u5f20\u7f29\u7565\u56fe", done-failed, total)
+	if failed > 0 {
+		message = fmt.Sprintf("\u5df2\u5904\u7406 %d/%d \u4e2a\u7f29\u7565\u56fe\u4efb\u52a1\uff0c%d \u4e2a\u5931\u8d25", done, total, failed)
+	}
+	stage := "generating_thumbnails"
+	if !succeeded {
+		stage = "thumbnail_failed"
+	}
+
+	return NodeProgressUpdate{
+		Percent:    percent,
+		Done:       done,
+		Total:      total,
+		Stage:      stage,
+		Message:    message,
+		SourcePath: normalizeWorkflowPath(videoPath),
+		TargetPath: normalizeWorkflowPath(thumbnailPath),
+	}
 }
 
 type thumbnailRollbackEntry struct {
@@ -354,6 +395,9 @@ func thumbnailNodeRollbackEntriesFromValues(itemsValue any, stepResultsValue any
 	entries := make([]thumbnailRollbackEntry, 0, len(stepResults))
 	for _, step := range stepResults {
 		if strings.TrimSpace(step.NodeType) != thumbnailNodeExecutorType {
+			continue
+		}
+		if !isStepSucceeded(step.Status) {
 			continue
 		}
 		path := strings.TrimSpace(step.TargetPath)
@@ -439,6 +483,9 @@ func thumbnailNodePathsFromStepResults(raw any) []string {
 	paths := make([]string, 0, len(stepResults))
 	for _, step := range stepResults {
 		if strings.TrimSpace(step.NodeType) != thumbnailNodeExecutorType {
+			continue
+		}
+		if !isStepSucceeded(step.Status) {
 			continue
 		}
 		path := strings.TrimSpace(step.TargetPath)

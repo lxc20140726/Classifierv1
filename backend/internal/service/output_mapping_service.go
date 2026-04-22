@@ -76,6 +76,9 @@ func (s *OutputMappingService) Build(ctx context.Context, workflowRunID string) 
 		folderPathMap := outputMappingFolderPathMap(items)
 
 		for _, step := range stepResults {
+			if !isStepSucceeded(step.Status) {
+				continue
+			}
 			targetPath := normalizeWorkflowPath(step.TargetPath)
 			sourcePath := normalizeWorkflowPath(step.SourcePath)
 			folderID := outputMappingResolveFolderID(items, step, folderPathMap)

@@ -1866,6 +1866,9 @@ func stepResultTargetsForNode(outputs map[string]TypedValue, nodeType string) []
 		if strings.TrimSpace(step.NodeType) != nodeType {
 			continue
 		}
+		if !isStepSucceeded(step.Status) {
+			continue
+		}
 		target := strings.TrimSpace(step.TargetPath)
 		if target == "" {
 			continue

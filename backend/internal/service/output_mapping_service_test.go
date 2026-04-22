@@ -135,6 +135,91 @@ func TestOutputMappingResolveFolderIDMatchesNormalizedChildPath(t *testing.T) {
 	}
 }
 
+func TestOutputMappingServiceBuildSkipsFailedStepResults(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	database := newServiceTestDB(t)
+	folderRepo := repository.NewFolderRepository(database)
+	workflowRunRepo := repository.NewWorkflowRunRepository(database)
+	nodeRunRepo := repository.NewNodeRunRepository(database)
+	mappingRepo := repository.NewOutputMappingRepository(database)
+
+	folder := &repository.Folder{
+		ID:             "folder-output-mapping-failed-step",
+		Path:           "/source/album",
+		SourceDir:      "/source",
+		RelativePath:   "album",
+		Name:           "album",
+		Category:       "video",
+		CategorySource: "workflow",
+		Status:         "pending",
+	}
+	if err := folderRepo.Upsert(ctx, folder); err != nil {
+		t.Fatalf("folderRepo.Upsert() error = %v", err)
+	}
+
+	run := &repository.WorkflowRun{
+		ID:            "run-output-mapping-failed-step",
+		JobID:         "job-output-mapping-failed-step",
+		FolderID:      folder.ID,
+		WorkflowDefID: "wf-output-mapping-failed-step",
+		Status:        "succeeded",
+	}
+	if err := workflowRunRepo.Create(ctx, run); err != nil {
+		t.Fatalf("workflowRunRepo.Create() error = %v", err)
+	}
+
+	outputJSON := mustOutputMappingTypedOutputs(t, map[string]TypedValue{
+		"items": {
+			Type: PortTypeProcessingItemList,
+			Value: []ProcessingItem{{
+				FolderID:    folder.ID,
+				SourcePath:  "/source/album",
+				CurrentPath: "/source/album",
+				FolderName:  "album",
+				Category:    "video",
+				SourceKind:  ProcessingItemSourceKindDirectory,
+			}},
+		},
+		"step_results": {
+			Type: PortTypeProcessingStepResultList,
+			Value: []ProcessingStepResult{{
+				FolderID:   folder.ID,
+				SourcePath: "/source/album/bad.mp4",
+				TargetPath: "/source/album/bad.jpg",
+				NodeType:   thumbnailNodeExecutorType,
+				Status:     "failed",
+				Error:      "moov atom not found",
+			}},
+		},
+	})
+	if err := nodeRunRepo.Create(ctx, &repository.NodeRun{
+		ID:            "node-run-output-mapping-failed-step",
+		WorkflowRunID: run.ID,
+		NodeID:        "thumbnail-video",
+		NodeType:      thumbnailNodeExecutorType,
+		Sequence:      1,
+		Status:        "succeeded",
+		OutputJSON:    outputJSON,
+	}); err != nil {
+		t.Fatalf("nodeRunRepo.Create() error = %v", err)
+	}
+
+	svc := NewOutputMappingService(workflowRunRepo, nodeRunRepo, folderRepo, mappingRepo)
+	if err := svc.Build(ctx, run.ID); err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+
+	mappings, err := mappingRepo.ListByWorkflowRunID(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("mappingRepo.ListByWorkflowRunID() error = %v", err)
+	}
+	if len(mappings) != 0 {
+		t.Fatalf("mappings len = %d, want 0", len(mappings))
+	}
+}
+
 func mustOutputMappingTypedOutputs(t *testing.T, values map[string]TypedValue) string {
 	t.Helper()
 

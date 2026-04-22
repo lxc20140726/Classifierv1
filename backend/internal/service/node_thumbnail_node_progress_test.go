@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -88,6 +89,72 @@ func TestThumbnailNodeUsesTopLevelVideosAndFFmpegFlags(t *testing.T) {
 	}
 	if len(updates) == 0 {
 		t.Fatalf("progress updates is empty")
+	}
+	last := updates[len(updates)-1]
+	if last.Percent != 100 || last.Total != 2 || last.Done != 2 {
+		t.Fatalf("last progress = %+v, want percent=100 total=2 done=2", last)
+	}
+}
+
+func TestThumbnailNodeContinuesWhenVideoDecodeFails(t *testing.T) {
+	t.Setenv("THUMBNAIL_MAX_PARALLEL", "1")
+
+	adapter := fs.NewMockAdapter()
+	adapter.AddDir("/media/album", []fs.DirEntry{
+		{Name: "bad.mp4", Size: 100},
+		{Name: "good.mkv", Size: 200},
+	})
+
+	executor := newThumbnailNodeExecutor(adapter, nil)
+	executor.lookPath = func(_ string) (string, error) { return "ffmpeg", nil }
+	executor.runFFmpeg = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		if strings.Contains(strings.Join(args, " "), "bad.mp4") {
+			return []byte("moov atom not found"), errors.New("exit status 183")
+		}
+		return []byte("ok"), nil
+	}
+
+	var updates []NodeProgressUpdate
+	out, err := executor.Execute(context.Background(), NodeExecutionInput{
+		Node: repository.WorkflowGraphNode{
+			ID:    "thumb-continue",
+			Type:  thumbnailNodeExecutorType,
+			Label: "缩略图",
+		},
+		Inputs: map[string]*TypedValue{
+			"items": {
+				Type: PortTypeProcessingItemList,
+				Value: []ProcessingItem{{
+					CurrentPath: "/media/album",
+					SourcePath:  "/media/album",
+					FolderID:    "folder-1",
+					SourceKind:  ProcessingItemSourceKindDirectory,
+				}},
+			},
+		},
+		ProgressFn: func(update NodeProgressUpdate) {
+			updates = append(updates, update)
+		},
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	results := out.Outputs["step_results"].Value.([]ProcessingStepResult)
+	if len(results) != 2 {
+		t.Fatalf("len(step_results) = %d, want 2", len(results))
+	}
+	if results[0].Status != "failed" {
+		t.Fatalf("bad video status = %q, want failed", results[0].Status)
+	}
+	if !strings.Contains(results[0].Error, "moov atom not found") {
+		t.Fatalf("bad video error = %q, want ffmpeg output", results[0].Error)
+	}
+	if results[1].Status != "succeeded" {
+		t.Fatalf("good video status = %q, want succeeded", results[1].Status)
+	}
+	if len(updates) != 2 {
+		t.Fatalf("progress updates len = %d, want 2", len(updates))
 	}
 	last := updates[len(updates)-1]
 	if last.Percent != 100 || last.Total != 2 || last.Done != 2 {

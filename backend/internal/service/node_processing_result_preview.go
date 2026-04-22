@@ -161,5 +161,5 @@ func isSupportedStepResultInput(raw any) bool {
 
 func isStepSucceeded(status string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(status))
-	return normalized == "moved" || normalized == "succeeded" || normalized == "success"
+	return normalized == "moved" || normalized == "renamed" || normalized == "succeeded" || normalized == "success"
 }
