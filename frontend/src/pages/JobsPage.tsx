@@ -96,11 +96,11 @@ function ScheduledWorkflowTable({
         <div className="space-y-3">
           {isLoading ? (
             <div className="border-2 border-foreground bg-card px-4 py-16 text-center font-bold text-muted-foreground shadow-hard">
-              姝ｅ湪鍔犺浇璁″垝浠诲姟...
+              正在加载计划任务...
             </div>
           ) : workflows.length === 0 ? (
             <div className="border-2 border-dashed border-foreground bg-card px-4 py-16 text-center font-bold text-muted-foreground shadow-hard">
-              鏆傛棤璁″垝浠诲姟锛屽彲鍒涘缓甯?cron 鐨勫伐浣滄祦浣滀笟銆?
+              暂无计划任务，可创建带 cron 的工作流作业。
             </div>
           ) : (
             workflows.map((workflow) => (
@@ -118,7 +118,7 @@ function ScheduledWorkflowTable({
                 </div>
                 <div className="mt-3 space-y-1 text-xs font-bold text-muted-foreground">
                   <p>{workflow.job_type === 'scan' ? '扫描' : '工作流'}</p>
-                  <p className="break-all">{workflow.job_type === 'scan' ? '鎵弿鐩綍' : (workflowNameMap[workflow.workflow_def_id] ?? workflow.workflow_def_id)}</p>
+                  <p className="break-all">{workflow.job_type === 'scan' ? '扫描目录' : (workflowNameMap[workflow.workflow_def_id] ?? workflow.workflow_def_id)}</p>
                   <p className="break-all font-mono">{workflow.cron_spec}</p>
                   <p className="font-mono">{formatDate(workflow.last_run_at)}</p>
                   <p className="tabular-nums text-foreground">{workflow.job_type === 'scan' ? workflow.source_dirs.length : workflow.folder_ids.length}</p>
@@ -129,7 +129,7 @@ function ScheduledWorkflowTable({
                     onClick={() => onEdit(workflow)}
                     className="border-2 border-foreground bg-background px-3 py-2 text-xs font-bold transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5"
                   >
-                    缂栬緫
+                    编辑
                   </button>
                   <button
                     type="button"
@@ -146,7 +146,7 @@ function ScheduledWorkflowTable({
                     className="inline-flex items-center justify-center gap-1 border-2 border-red-900 bg-red-100 px-3 py-2 text-xs font-bold text-red-900 transition-all hover:bg-red-900 hover:text-red-100 hover:shadow-hard hover:-translate-y-0.5"
                   >
                     <Trash2 className="h-3 w-3" />
-                    鍒犻櫎
+                    删除
                   </button>
                 </div>
               </article>

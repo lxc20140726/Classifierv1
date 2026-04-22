@@ -283,11 +283,11 @@ export default function AuditLogsPage() {
         <div className="space-y-3">
           {isLoading ? (
             <div className="border-2 border-foreground bg-card px-5 py-12 text-center font-bold text-muted-foreground shadow-hard">
-              姝ｅ湪鍔犺浇瀹¤鏃ュ織...
+              正在加载审计日志...
             </div>
           ) : logs.length === 0 ? (
             <div className="border-2 border-dashed border-foreground bg-card px-5 py-12 text-center font-bold text-muted-foreground shadow-hard">
-              娌℃湁鍖归厤鐨勫璁¤褰曘€?
+              没有匹配的审计记录。
             </div>
           ) : (
             logs.map((log) => (

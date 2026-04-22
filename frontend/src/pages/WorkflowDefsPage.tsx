@@ -341,7 +341,7 @@ export default function WorkflowDefsPage(_props: WorkflowDefsPageProps) {
                   {def.is_active ? (
                     <span className="inline-flex items-center gap-1.5 border-2 border-foreground bg-green-300 px-3 py-1 text-xs font-black text-green-900">
                       <Check className="h-3 w-3" />
-                      宸叉縺娲?
+                      已激活
                     </span>
                   ) : (
                     <button
@@ -349,7 +349,7 @@ export default function WorkflowDefsPage(_props: WorkflowDefsPageProps) {
                       onClick={() => void handleSetActive(def)}
                       className="w-full border-2 border-foreground bg-background px-3 py-1.5 text-xs font-bold transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5 sm:w-auto"
                     >
-                      璁句负婵€娲?
+                      设为激活
                     </button>
                   )}
                 </div>
@@ -360,7 +360,7 @@ export default function WorkflowDefsPage(_props: WorkflowDefsPageProps) {
                     className="flex items-center justify-center gap-1.5 border-2 border-foreground bg-green-300 px-3 py-2 text-xs font-bold text-green-900 transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5"
                   >
                     <Play className="h-3 w-3" />
-                    鍚姩
+                    启动
                   </button>
                   <button
                     type="button"
@@ -368,13 +368,13 @@ export default function WorkflowDefsPage(_props: WorkflowDefsPageProps) {
                     className="flex items-center justify-center gap-1.5 border-2 border-foreground bg-background px-3 py-2 text-xs font-bold transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5"
                   >
                     <Pencil className="h-3 w-3" />
-                    缂栬緫
+                    编辑
                   </button>
                   <Link
                     to={`/workflow-defs/${def.id}/editor`}
                     className="flex items-center justify-center gap-1.5 border-2 border-foreground bg-primary px-3 py-2 text-xs font-bold text-primary-foreground transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5"
                   >
-                    鍙鍖栫紪杈?
+                    可视化编辑
                   </Link>
                   <button
                     type="button"
@@ -382,7 +382,7 @@ export default function WorkflowDefsPage(_props: WorkflowDefsPageProps) {
                     className="flex items-center justify-center gap-1.5 border-2 border-red-900 bg-red-100 px-3 py-2 text-xs font-bold text-red-900 transition-all hover:bg-red-900 hover:text-red-100 hover:shadow-hard hover:-translate-y-0.5"
                   >
                     <Trash2 className="h-3 w-3" />
-                    鍒犻櫎
+                    删除
                   </button>
                 </div>
               </article>

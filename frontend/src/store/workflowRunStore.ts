@@ -149,7 +149,7 @@ function persistRecentLaunches(next: Record<string, RecentLaunchRecord>) {
   try {
     window.localStorage.setItem(RECENT_LAUNCH_STORAGE_KEY, JSON.stringify(next))
   } catch {
-    // 蹇界暐鎸佷箙鍖栧紓甯革紝閬垮厤褰卞搷涓绘祦绋?
+    // 忽略持久化异常，避免影响主流程。
   }
 }
 

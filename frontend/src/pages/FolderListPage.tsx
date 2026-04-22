@@ -1,4 +1,4 @@
-﻿import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import {
   Clock,
   FileText,
@@ -34,12 +34,12 @@ import type { Category, Folder, FolderStatus, Job, WorkflowGraph, WorkflowStageS
 type SortableFolderColumn = 'updated_at' | 'total_size'
 
 const CATEGORY_LABEL: Record<Category | '', string> = {
-  '': '鍏ㄩ儴鍒嗙被',
-  photo: '鍐欑湡',
-  video: '瑙嗛',
-  mixed: '娣峰悎',
-  manga: '婕敾',
-  other: '鍏朵粬',
+  '': '全部分类',
+  photo: '写真',
+  video: '视频',
+  mixed: '混合',
+  manga: '漫画',
+  other: '其他',
 }
 
 const CATEGORY_COLOR: Record<Category, string> = {
@@ -221,7 +221,7 @@ function ScanProgressBanner() {
     <div className="border-2 border-foreground bg-blue-100 px-4 py-3 shadow-hard mb-4">
       <div className="flex items-center gap-2 text-sm text-blue-900">
         <Loader2 className="h-5 w-5 shrink-0 animate-spin" />
-        <span className="font-black">姝ｅ湪鎵弿</span>
+        <span className="font-black">正在扫描</span>
         {scanProgress?.currentFolderName != null && (
           <span className="truncate font-mono font-bold">{scanProgress.currentFolderName}</span>
         )}
@@ -250,7 +250,7 @@ function JobItem({ job }: { job: Job }) {
     <div className="space-y-2">
       <div className="flex items-center justify-between gap-2">
         <span className="truncate text-xs font-bold">
-          {job.type === 'move' ? '绉诲姩浠诲姟' : job.type}
+          {job.type === 'move' ? '移动任务' : job.type}
         </span>
         <span className={cn('shrink-0 px-2 py-0.5 text-[10px] font-black', statusColor)}>
           {statusLabel}
@@ -266,8 +266,8 @@ function JobItem({ job }: { job: Job }) {
       )}
       <p className="text-xs font-medium text-muted-foreground">
         <span className="tabular-nums font-bold text-foreground">{job.done}/{job.total} 项</span>
-        {job.failed > 0 && <span className="text-red-600 font-bold"> 路 {job.failed} 澶辫触</span>}
-        {job.created_at ? <span> 路 {formatRelativeTime(job.created_at)}</span> : null}
+        {job.failed > 0 && <span className="text-red-600 font-bold"> · {job.failed} 失败</span>}
+        {job.created_at ? <span> · {formatRelativeTime(job.created_at)}</span> : null}
       </p>
     </div>
   )
@@ -288,7 +288,7 @@ function RecentJobsPanel() {
         <h3 className="text-base font-black tracking-tight">最近任务</h3>
       </div>
       {jobs.length === 0 ? (
-        <p className="text-xs font-medium text-muted-foreground py-4 text-center">鏆傛棤浠诲姟璁板綍</p>
+        <p className="text-xs font-medium text-muted-foreground py-4 text-center">暂无任务记录</p>
       ) : (
         <ul className="divide-y-2 divide-foreground">
           {jobs.slice(0, 5).map((job) => (
@@ -317,7 +317,7 @@ function RecentLogsPanel() {
         <h3 className="text-base font-black tracking-tight">最近日志</h3>
       </div>
       {logs.length === 0 ? (
-        <p className="text-xs font-medium text-muted-foreground py-4 text-center">鏆傛棤鎿嶄綔鏃ュ織</p>
+        <p className="text-xs font-medium text-muted-foreground py-4 text-center">暂无操作日志</p>
       ) : (
         <ul className="divide-y-2 divide-foreground">
           {logs.slice(0, 5).map((log) => (
@@ -334,7 +334,7 @@ function RecentLogsPanel() {
                         : 'bg-gray-200 text-gray-900',
                   )}
                 >
-                  {log.result === 'success' ? '鎴愬姛' : log.result === 'failed' ? '澶辫触' : log.result}
+                  {log.result === 'success' ? '成功' : log.result === 'failed' ? '失败' : log.result}
                 </span>
               </div>
               {log.folder_path ? (
@@ -432,22 +432,22 @@ function FolderCard({
           <span className="border-2 border-amber-900 bg-amber-200 px-2 py-0.5 text-xs font-bold text-amber-900">含其他文件</span>
         )}
         {folder.category_source === 'manual' && (
-          <span className="border-2 border-indigo-900 bg-indigo-200 px-2 py-0.5 text-xs font-bold text-indigo-900">鎵嬪姩</span>
+          <span className="border-2 border-indigo-900 bg-indigo-200 px-2 py-0.5 text-xs font-bold text-indigo-900">手动</span>
         )}
       </div>
 
       <p className="mt-3 break-all font-mono text-[11px] font-bold text-muted-foreground">{folder.path}</p>
       <div className="mt-4 grid grid-cols-3 gap-2 text-center">
         <div className="border-2 border-foreground bg-muted/30 p-1.5">
-          <p className="text-[10px] font-bold text-muted-foreground">鍥剧墖</p>
+          <p className="text-[10px] font-bold text-muted-foreground">图片</p>
           <p className="text-sm font-black tabular-nums">{folder.image_count}</p>
         </div>
         <div className="border-2 border-foreground bg-muted/30 p-1.5">
-          <p className="text-[10px] font-bold text-muted-foreground">瑙嗛</p>
+          <p className="text-[10px] font-bold text-muted-foreground">视频</p>
           <p className="text-sm font-black tabular-nums">{folder.video_count}</p>
         </div>
         <div className="border-2 border-foreground bg-muted/30 p-1.5">
-          <p className="text-[10px] font-bold text-muted-foreground">澶у皬</p>
+          <p className="text-[10px] font-bold text-muted-foreground">大小</p>
           <p className="text-sm font-black">{formatBytes(folder.total_size)}</p>
         </div>
       </div>
@@ -459,7 +459,7 @@ function FolderCard({
             onClick={onRestore}
             className="w-full border-2 border-foreground bg-background px-2 py-1.5 text-xs font-bold transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5 sm:w-auto sm:min-w-28"
           >
-            鎭㈠鎵弿
+            恢复扫描
           </button>
         ) : (
           <>
@@ -468,26 +468,27 @@ function FolderCard({
               onClick={onLaunchWorkflow}
               className="w-full border-2 border-foreground bg-green-300 px-2 py-1.5 text-xs font-bold text-green-900 transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5 sm:w-auto sm:min-w-28"
             >
-              鍚姩宸ヤ綔娴?            </button>
+              启动工作流
+            </button>
             <button
               type="button"
               onClick={onOpenLiveClassification}
               className="w-full border-2 border-foreground bg-background px-2 py-1.5 text-xs font-bold transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5 sm:w-auto"
             >
-              瀹炴椂鍒嗙被
+              实时分类
             </button>
             <button
               type="button"
               onClick={onOpenLineage}
               className="w-full border-2 border-foreground bg-background px-2 py-1.5 text-xs font-bold transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5 sm:w-auto"
             >
-              璺緞鍏崇郴
+              路径关系
             </button>
             <select
               value={folder.category}
               onChange={(e) => onUpdateCategory(e.target.value as Category)}
               className="w-full min-w-0 border-2 border-foreground bg-background px-2 py-1.5 text-xs font-bold outline-none focus:ring-2 focus:ring-foreground focus:ring-offset-1 sm:w-auto sm:flex-1 sm:min-w-[9rem]"
-              aria-label="鏇存敼鍒嗙被"
+              aria-label="更改分类"
             >
               {(['photo', 'video', 'mixed', 'manga', 'other'] as Category[]).map((c) => (
                 <option key={c} value={c}>{CATEGORY_LABEL[c]}</option>
@@ -514,7 +515,7 @@ function FolderCard({
             <button
               type="button"
               onClick={onRemove}
-              title="浠庤蒋浠朵腑闅愯棌锛屼笉鏀瑰姩瀹為檯鏂囦欢"
+              title="从软件中隐藏，不改动实际文件"
               className="inline-flex h-8 w-8 items-center justify-center border-2 border-red-900 bg-red-100 p-1.5 text-red-900 transition-all hover:bg-red-900 hover:text-red-100 hover:shadow-hard hover:-translate-y-0.5"
             >
               <X className="h-4 w-4" />
@@ -544,7 +545,7 @@ function FolderRow({
 
   useEffect(() => {
     if (dotRef.current) {
-      // 绮掑瓙椋炲叆鎴愪负鍒楄〃鍦嗙偣鐨勫姩鏁?
+      // 粒子飞入成为列表圆点的动效
       gsap.fromTo(dotRef.current, 
         { 
           scale: 0,
@@ -603,9 +604,9 @@ function FolderRow({
         </div>
       </td>
       <td className="hidden px-4 py-4 text-xs font-bold text-muted-foreground sm:table-cell">
-        <span className="tabular-nums text-foreground">{folder.image_count}</span> 鍥?
-        <span className="mx-2">路</span>
-        <span className="tabular-nums text-foreground">{folder.video_count}</span> 瑙?
+        <span className="tabular-nums text-foreground">{folder.image_count}</span> 图
+        <span className="mx-2">·</span>
+        <span className="tabular-nums text-foreground">{folder.video_count}</span> 视
       </td>
       <td className="hidden px-4 py-4 text-xs font-mono font-bold text-foreground md:table-cell">
         {formatBytes(folder.total_size)}
@@ -622,7 +623,7 @@ function FolderRow({
               onClick={onRestore}
               className="border-2 border-foreground bg-background px-3 py-1.5 text-xs font-bold transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5"
             >
-              鎭㈠鎵弿
+              恢复扫描
             </button>
           ) : (
             <>
@@ -631,13 +632,14 @@ function FolderRow({
                 onClick={onLaunchWorkflow}
                 className="border-2 border-foreground bg-green-300 px-3 py-1.5 text-xs font-bold text-green-900 transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5"
               >
-                鍚姩宸ヤ綔娴?              </button>
+                启动工作流
+              </button>
               <button
                 type="button"
                 onClick={onOpenLiveClassification}
                 className="border-2 border-foreground bg-background px-3 py-1.5 text-xs font-bold transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5"
               >
-                瀹炴椂鍒嗙被
+                实时分类
               </button>
               <button
                 type="button"
@@ -645,13 +647,13 @@ function FolderRow({
                 className="inline-flex items-center gap-1 border-2 border-foreground bg-background px-2 py-1.5 text-xs font-bold transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5"
               >
                 <Link2 className="h-3.5 w-3.5" />
-                璺緞鍏崇郴
+                路径关系
               </button>
               <select
                 value={folder.category}
                 onChange={(e) => onUpdateCategory(e.target.value as Category)}
                 className="min-w-[8rem] border-2 border-foreground bg-background px-2 py-1.5 text-xs font-bold outline-none focus:ring-2 focus:ring-foreground focus:ring-offset-1"
-                aria-label="鏇存敼鍒嗙被"
+                aria-label="更改分类"
               >
                 {(['photo', 'video', 'mixed', 'manga', 'other'] as Category[]).map((c) => (
                   <option key={c} value={c}>{CATEGORY_LABEL[c]}</option>
@@ -678,7 +680,7 @@ function FolderRow({
               <button
                 type="button"
                 onClick={onRemove}
-                title="浠庤蒋浠朵腑闅愯棌锛屼笉鏀瑰姩瀹為檯鏂囦欢"
+                title="从软件中隐藏，不改动实际文件"
                 className="inline-flex h-8 w-8 items-center justify-center border-2 border-red-900 bg-red-100 p-1.5 text-red-900 transition-all hover:bg-red-900 hover:text-red-100 hover:shadow-hard hover:-translate-y-0.5"
               >
                 <X className="h-4 w-4" />
@@ -972,7 +974,7 @@ export default function FolderListPage() {
                 'px-3 py-2 text-sm transition-colors',
                 viewMode === 'grid' ? 'bg-foreground text-background' : 'hover:bg-muted',
               )}
-              title="缃戞牸瑙嗗浘"
+              title="网格视图"
             >
               <Grid2X2 className="h-4 w-4" />
             </button>
@@ -984,7 +986,7 @@ export default function FolderListPage() {
                 'px-3 py-2 text-sm transition-colors',
                 viewMode === 'list' ? 'bg-foreground text-background' : 'hover:bg-muted',
               )}
-              title="鍒楄〃瑙嗗浘"
+              title="列表视图"
             >
               <List className="h-4 w-4" />
             </button>
@@ -1037,7 +1039,7 @@ export default function FolderListPage() {
               : 'border-foreground bg-background text-foreground',
           )}
         >
-          宸查殣钘?
+          已隐藏
         </button>
         <div className="hidden h-6 w-0.5 self-center bg-foreground md:block" />
         <button
@@ -1063,7 +1065,7 @@ export default function FolderListPage() {
               : 'border-foreground bg-background text-foreground',
           )}
         >
-          淇敼鏃堕棿 {getSortLabel(currentSortBy === 'updated_at', currentSortOrder === 'desc')}
+          修改时间 {getSortLabel(currentSortBy === 'updated_at', currentSortOrder === 'desc')}
         </button>
         <button
           type="button"
@@ -1075,7 +1077,7 @@ export default function FolderListPage() {
               : 'border-foreground bg-background text-foreground',
           )}
         >
-          澶у皬 {getSortLabel(currentSortBy === 'total_size', currentSortOrder === 'desc')}
+          大小 {getSortLabel(currentSortBy === 'total_size', currentSortOrder === 'desc')}
         </button>
       </div>
 
@@ -1094,7 +1096,7 @@ export default function FolderListPage() {
           ) : folders.length === 0 ? (
             <div className="flex flex-col items-center justify-center border-2 border-dashed border-foreground py-32 text-muted-foreground">
               <FolderOpen className="h-12 w-12 opacity-50" />
-              <p className="mt-4 text-sm font-bold">鏆傛棤鏂囦欢澶癸紝璇峰厛鎵弿</p>
+              <p className="mt-4 text-sm font-bold">暂无文件夹，请先扫描</p>
             </div>
           ) : effectiveViewMode === 'grid' ? (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -1138,7 +1140,7 @@ export default function FolderListPage() {
                         onClick={() => setSort('total_size')}
                         className="inline-flex items-center gap-1 transition-colors hover:text-foreground/70"
                       >
-                        <span>澶у皬</span>
+                        <span>大小</span>
                         <span>{getSortLabel(currentSortBy === 'total_size', currentSortOrder === 'desc')}</span>
                       </button>
                     </th>
@@ -1148,7 +1150,7 @@ export default function FolderListPage() {
                         onClick={() => setSort('updated_at')}
                         className="inline-flex items-center gap-1 transition-colors hover:text-foreground/70"
                       >
-                        <span>淇敼鏃堕棿</span>
+                        <span>修改时间</span>
                         <span>{getSortLabel(currentSortBy === 'updated_at', currentSortOrder === 'desc')}</span>
                       </button>
                     </th>
@@ -1185,7 +1187,7 @@ export default function FolderListPage() {
                 onClick={() => setPage(page - 1)}
                 className="border-2 border-foreground bg-background px-4 py-2 text-sm font-bold transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5 disabled:opacity-40 disabled:hover:bg-background disabled:hover:text-foreground disabled:hover:shadow-none disabled:hover:translate-y-0"
               >
-                涓婁竴椤?
+                上一页
               </button>
               <span className="min-w-[4rem] text-center text-sm font-black font-mono">
                 {page} / {totalPages}
@@ -1196,11 +1198,17 @@ export default function FolderListPage() {
                 onClick={() => setPage(page + 1)}
                 className="border-2 border-foreground bg-background px-4 py-2 text-sm font-bold transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5 disabled:opacity-40 disabled:hover:bg-background disabled:hover:text-foreground disabled:hover:shadow-none disabled:hover:translate-y-0"
               >
-                涓嬩竴椤?
+                下一页
               </button>
             </div>
           )}
         </div>
+
+        <div className="flex w-full flex-col gap-6 xl:w-80 xl:shrink-0">
+          <RecentJobsPanel />
+          <RecentLogsPanel />
+        </div>
+      </div>
       {launchDialog.open && launchDialog.folderIds.length > 0 && typeof document !== 'undefined' && createPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="max-h-[calc(100dvh-2rem)] w-full max-w-3xl overflow-y-auto border-2 border-foreground bg-background p-4 shadow-hard-lg sm:p-6">
@@ -1259,6 +1267,18 @@ export default function FolderListPage() {
                 )}
               </div>
             </div>
+
+            {!workflowDefsLoading && !workflowDefsError && workflowLaunchEntries.length > 0 && launchableWorkflowCount === 0 && (
+              <p className="mt-4 border-2 border-amber-900 bg-amber-100 px-4 py-3 text-sm font-bold text-amber-900">
+                暂无可快捷启动的工作流
+              </p>
+            )}
+
+            {selectedWorkflowLaunchability?.canLaunch === false && (
+              <p className="mt-4 border-2 border-amber-900 bg-amber-100 px-4 py-3 text-sm font-bold text-amber-900">
+                {selectedWorkflowLaunchability.error ?? '该工作流暂不可快捷启动'}
+              </p>
+            )}
 
             {launchError && (
               <p className="mt-4 border-2 border-red-900 bg-red-100 px-4 py-3 text-sm font-bold text-red-900 shadow-hard">
@@ -1332,7 +1352,7 @@ export default function FolderListPage() {
             </div>
           </div>
         </div>,
-        document.body
+        document.body,
       )}
 
       <SnapshotDrawer

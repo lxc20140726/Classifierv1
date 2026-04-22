@@ -53,6 +53,25 @@ function mapRunStatusToLiveStatus(status: WorkflowRunUpdatedEvent['status']): Li
   }
 }
 
+const CATEGORY_VALUES: ReadonlySet<LiveClassificationItem['category']> = new Set([
+  'photo',
+  'video',
+  'mixed',
+  'manga',
+  'other',
+])
+
+function normalizeCategory(
+  value: string | undefined,
+  fallback: LiveClassificationItem['category'] | undefined,
+): LiveClassificationItem['category'] {
+  const normalized = value?.trim()
+  if (normalized && CATEGORY_VALUES.has(normalized as LiveClassificationItem['category'])) {
+    return normalized as LiveClassificationItem['category']
+  }
+  return fallback ?? 'other'
+}
+
 function createItemFromFolder(folder: Folder): LiveClassificationItem {
   return {
     folder_id: folder.id,
@@ -255,7 +274,7 @@ export const useLiveClassificationStore = create<LiveClassificationStore>((set, 
         folder_path: payload.folder_path ?? existing?.folder_path ?? '',
         source_dir: payload.source_dir ?? existing?.source_dir ?? '',
         relative_path: payload.relative_path ?? existing?.relative_path ?? '',
-        category: payload.category ?? existing?.category ?? 'other',
+        category: normalizeCategory(payload.category, existing?.category),
         category_source: existing?.category_source ?? 'auto',
         classification_status: 'scanning',
         node_id: existing?.node_id ?? '',

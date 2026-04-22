@@ -1274,13 +1274,13 @@ export default function FolderLineagePage() {
         ) : (
           <section className="space-y-3 border-2 border-foreground bg-card p-3 shadow-hard">
             <div>
-              <h2 className="text-sm font-black">鐩綍鍒嗙粍鏂囦欢娴佸悜鎽樿</h2>
+              <h2 className="text-sm font-black">目录分组文件流向摘要</h2>
               <p className="mt-1 text-[11px] font-bold text-muted-foreground">
-                灏忓睆骞曚互鍗＄墖鎽樿灞曠ず鏉ユ簮銆佺洰鏍囩洰褰曞拰鏄犲皠鍏崇郴锛岄伩鍏嶆í鍚戞粴鍔ㄣ€?
+                小屏幕以卡片摘要展示来源、目标目录和映射关系，避免横向滚动。
               </p>
             </div>
             <div className="space-y-2 border-2 border-foreground bg-muted/10 p-3">
-              <p className="text-xs font-black text-muted-foreground">婧愮洰褰?</p>
+              <p className="text-xs font-black text-muted-foreground">源目录</p>
               <p className="break-all font-mono text-xs font-bold">{flow.source_directory.path || '—'}</p>
             </div>
             <div className="space-y-2">
@@ -1298,9 +1298,9 @@ export default function FolderLineagePage() {
               })}
             </div>
             <div className="space-y-2 border-2 border-foreground bg-muted/10 p-3">
-              <p className="text-xs font-black text-muted-foreground">鏂囦欢鏄犲皠</p>
+              <p className="text-xs font-black text-muted-foreground">文件映射</p>
               {links.length === 0 ? (
-                <p className="text-xs font-bold text-muted-foreground">鏆傛棤鏄犲皠鏁版嵁</p>
+                <p className="text-xs font-bold text-muted-foreground">暂无映射数据</p>
               ) : (
                 <ul className="space-y-1">
                   {links.slice(0, 30).map((link) => {
