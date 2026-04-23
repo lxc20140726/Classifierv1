@@ -99,13 +99,14 @@ func (e *phase4MoveNodeExecutor) Execute(ctx context.Context, input NodeExecutio
 		return e.executeLegacyMove(ctx, input, items, targetDir, conflictPolicy)
 	}
 
-	_, rootName, normalizedItems, err := e.normalizeAndValidateItems(ctx, items, input.Folder)
+	rootPath, rootName, normalizedItems, err := e.normalizeAndValidateItems(ctx, items, input.Folder)
 	if err != nil {
 		return NodeExecutionOutput{}, fmt.Errorf("%s.Execute: %w", e.Type(), err)
 	}
 
 	stepResults := make([]ProcessingStepResult, 0, len(normalizedItems))
 	outputItems := make([]ProcessingItem, 0, len(normalizedItems))
+	updatedFolderIDs := make(map[string]struct{}, len(normalizedItems))
 	for index, item := range normalizedItems {
 		itemTargetDir := phase4MoveResolveItemTargetDir(item, input.Node.Config, input.AppConfig, targetDir)
 		if strings.TrimSpace(itemTargetDir) == "" {
@@ -136,9 +137,15 @@ func (e *phase4MoveNodeExecutor) Execute(ctx context.Context, input NodeExecutio
 		item.ParentPath = itemTargetDir
 		item.FolderName = rootName
 		item.TargetName = rootName
-		if e.folders != nil && strings.TrimSpace(item.FolderID) != "" && item.SourceKind == ProcessingItemSourceKindDirectory {
-			if err := e.folders.UpdatePath(ctx, item.FolderID, item.CurrentPath, itemTargetDir, rootName); err != nil {
-				return NodeExecutionOutput{}, fmt.Errorf("%s.Execute: update folder path for %q: %w", e.Type(), item.FolderID, err)
+		if e.folders != nil && item.SourceKind == ProcessingItemSourceKindDirectory {
+			folderID, shouldUpdate := phase4MoveFolderPathUpdateID(item, input.Folder, rootPath)
+			if shouldUpdate {
+				if _, exists := updatedFolderIDs[folderID]; !exists {
+					if err := e.folders.UpdatePath(ctx, folderID, item.CurrentPath, itemTargetDir, rootName); err != nil {
+						return NodeExecutionOutput{}, fmt.Errorf("%s.Execute: update folder path for %q: %w", e.Type(), folderID, err)
+					}
+					updatedFolderIDs[folderID] = struct{}{}
+				}
 			}
 		}
 		outputItems = append(outputItems, item)
@@ -245,6 +252,20 @@ func (e *phase4MoveNodeExecutor) Rollback(ctx context.Context, input NodeRollbac
 	}
 
 	return nil
+}
+
+func phase4MoveFolderPathUpdateID(item ProcessingItem, runFolder *repository.Folder, rootPath string) (string, bool) {
+	folderID := strings.TrimSpace(item.FolderID)
+	if folderID == "" {
+		return "", false
+	}
+	if runFolder != nil {
+		return folderID, folderID == strings.TrimSpace(runFolder.ID)
+	}
+	if phase4MoveDirectoryItemAnchoredAtRoot(item, rootPath) {
+		return folderID, true
+	}
+	return "", false
 }
 
 func phase4MoveUseLegacyMode(items []ProcessingItem) bool {

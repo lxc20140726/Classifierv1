@@ -29,7 +29,15 @@ import { useFolderStore } from '@/store/folderStore'
 import { useJobStore } from '@/store/jobStore'
 import { useWorkflowDefStore } from '@/store/workflowDefStore'
 import { useWorkflowRunCardView, useWorkflowRunStore } from '@/store/workflowRunStore'
-import type { Category, Folder, FolderStatus, Job, WorkflowGraph, WorkflowStageStatus } from '@/types'
+import type {
+  Category,
+  Folder,
+  FolderStatus,
+  Job,
+  WorkflowDefinition,
+  WorkflowGraph,
+  WorkflowStageStatus,
+} from '@/types'
 
 type SortableFolderColumn = 'updated_at' | 'total_size'
 
@@ -70,6 +78,8 @@ const JOB_STATUS_LABEL: Record<string, string> = {
   failed: '失败',
   partial: '部分成功',
   cancelled: '已取消',
+  waiting_input: '待确认',
+  rolled_back: '已回退',
 }
 
 const JOB_STATUS_COLOR: Record<string, string> = {
@@ -79,6 +89,8 @@ const JOB_STATUS_COLOR: Record<string, string> = {
   failed: 'bg-red-300 text-red-900 border-2 border-foreground',
   partial: 'bg-yellow-300 text-yellow-900 border-2 border-foreground',
   cancelled: 'bg-gray-300 text-gray-900 border-2 border-foreground',
+  waiting_input: 'bg-amber-200 text-amber-900 border-2 border-foreground',
+  rolled_back: 'bg-gray-300 text-gray-900 border-2 border-foreground',
 }
 
 const WORKFLOW_STATUS_COLOR: Record<WorkflowStageStatus, string> = {
@@ -207,6 +219,47 @@ function buildJobHistoryLink(jobId: string, workflowRunId?: string) {
   return `/job-history?${query.toString()}`
 }
 
+const TERMINAL_JOB_STATUS = new Set(['succeeded', 'failed', 'partial', 'cancelled', 'rolled_back'])
+
+type WorkflowMode = 'classification' | 'processing' | 'mixed' | 'unknown'
+
+const WORKFLOW_MODE_LABEL: Record<WorkflowMode, string> = {
+  classification: '批量分类',
+  processing: '批量处理',
+  mixed: '分类+处理',
+  unknown: '批量任务',
+}
+
+const WORKFLOW_MODE_COLOR: Record<WorkflowMode, string> = {
+  classification: 'bg-blue-200 text-blue-900 border-2 border-foreground',
+  processing: 'bg-green-200 text-green-900 border-2 border-foreground',
+  mixed: 'bg-purple-200 text-purple-900 border-2 border-foreground',
+  unknown: 'bg-gray-200 text-gray-900 border-2 border-foreground',
+}
+
+function getWorkflowModeFromGraph(graphJSON: string): WorkflowMode {
+  try {
+    const parsed = JSON.parse(graphJSON) as Partial<WorkflowGraph>
+    const nodes = Array.isArray(parsed.nodes) ? parsed.nodes : []
+    const enabledTypes = new Set(
+      nodes
+        .filter((node) => node && node.enabled !== false)
+        .map((node) => String(node.type ?? '').trim())
+        .filter((nodeType) => nodeType !== ''),
+    )
+    const hasClassification = [...enabledTypes].some((nodeType) =>
+      CLASSIFICATION_NODE_TYPES.has(nodeType),
+    )
+    const hasProcessing = [...enabledTypes].some((nodeType) => PROCESSING_NODE_TYPES.has(nodeType))
+    if (hasClassification && hasProcessing) return 'mixed'
+    if (hasClassification) return 'classification'
+    if (hasProcessing) return 'processing'
+    return 'unknown'
+  } catch {
+    return 'unknown'
+  }
+}
+
 function ScanProgressBanner() {
   const isScanning = useFolderStore((s) => s.isScanning)
   const scanProgress = useFolderStore((s) => s.scanProgress)
@@ -298,6 +351,100 @@ function RecentJobsPanel() {
           ))}
         </ul>
       )}
+    </section>
+  )
+}
+
+function BatchWorkflowProgressPanel({
+  jobs,
+  workflowDefs,
+  onOpenJob,
+}: {
+  jobs: Job[]
+  workflowDefs: WorkflowDefinition[]
+  onOpenJob: (jobId: string) => void
+}) {
+  const workflowModeMap = workflowDefs.reduce<Record<string, WorkflowMode>>((acc, def) => {
+    acc[def.id] = getWorkflowModeFromGraph(def.graph_json)
+    return acc
+  }, {})
+  const workflowNameMap = workflowDefs.reduce<Record<string, string>>((acc, def) => {
+    acc[def.id] = def.name
+    return acc
+  }, {})
+
+  const activeBatchJobs = jobs
+    .filter((job) => {
+      if (job.type !== 'workflow') return false
+      if (TERMINAL_JOB_STATUS.has(job.status)) return false
+      const folderCount = Array.isArray(job.folder_ids) ? job.folder_ids.length : 0
+      return folderCount > 1 || job.total > 1 || job.done > 1
+    })
+    .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+
+  if (activeBatchJobs.length === 0) return null
+
+  return (
+    <section className="border-2 border-foreground bg-card p-4 shadow-hard">
+      <div className="mb-4 flex items-center gap-2 border-b-2 border-foreground pb-2">
+        <Loader2 className="h-5 w-5 animate-spin text-foreground" />
+        <h3 className="text-base font-black tracking-tight">批量任务进度</h3>
+      </div>
+      <ul className="divide-y-2 divide-foreground">
+        {activeBatchJobs.map((job) => {
+          const progress = job.total > 0 ? Math.round((job.done / job.total) * 100) : 0
+          const statusLabel = JOB_STATUS_LABEL[job.status] ?? job.status
+          const statusColor =
+            JOB_STATUS_COLOR[job.status] ?? 'bg-gray-200 text-gray-900 border-2 border-foreground'
+          const mode = job.workflow_def_id ? workflowModeMap[job.workflow_def_id] ?? 'unknown' : 'unknown'
+          const workflowName = job.workflow_def_id
+            ? workflowNameMap[job.workflow_def_id] ?? `工作流 ${job.workflow_def_id}`
+            : '工作流任务'
+          const folderCount = Array.isArray(job.folder_ids) ? job.folder_ids.length : 0
+
+          return (
+            <li key={job.id} className="space-y-2 py-3 first:pt-0 last:pb-0">
+              <div className="flex items-center justify-between gap-2">
+                <p className="truncate text-xs font-black" title={workflowName}>
+                  {workflowName}
+                </p>
+                <span className={cn('shrink-0 px-2 py-0.5 text-[10px] font-black', statusColor)}>
+                  {statusLabel}
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className={cn('px-2 py-0.5 text-[10px] font-black', WORKFLOW_MODE_COLOR[mode])}>
+                  {WORKFLOW_MODE_LABEL[mode]}
+                </span>
+                <span className="text-[10px] font-bold text-muted-foreground">
+                  目录 {folderCount > 0 ? folderCount : '?'} 个
+                </span>
+                <span className="text-[10px] font-bold text-muted-foreground">
+                  {job.done}/{job.total}（{progress}%）
+                </span>
+                {job.failed > 0 && (
+                  <span className="text-[10px] font-bold text-red-600">失败 {job.failed}</span>
+                )}
+              </div>
+              {job.total > 0 && (
+                <div className="h-1.5 w-full overflow-hidden border-2 border-foreground bg-muted">
+                  <div className="h-full bg-foreground transition-all duration-300" style={{ width: `${progress}%` }} />
+                </div>
+              )}
+              {job.status === 'waiting_input' && (
+                <p className="text-[10px] font-bold text-amber-700">存在待确认节点，任务暂停等待输入。</p>
+              )}
+              <button
+                type="button"
+                onClick={() => onOpenJob(job.id)}
+                className="inline-flex items-center border-2 border-foreground bg-background px-2 py-1 text-[10px] font-bold transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5"
+              >
+                查看详情
+              </button>
+            </li>
+          )
+        })}
+      </ul>
     </section>
   )
 }
@@ -738,12 +885,86 @@ export default function FolderListPage() {
   const [launchSuccessJobId, setLaunchSuccessJobId] = useState<string | null>(null)
   const [isLaunching, setIsLaunching] = useState(false)
   const [isHandlingReviewShortcut, setIsHandlingReviewShortcut] = useState(false)
+  const [isMobileTopBarHidden, setIsMobileTopBarHidden] = useState(false)
   const previousListKeyRef = useRef<string>('')
+  const workflowDefsRequestedRef = useRef(false)
+  const pageTopBarRef = useRef<HTMLDivElement | null>(null)
+  const mobileTopBarHiddenRef = useRef(false)
+  const lastScrollTopRef = useRef(0)
   const effectiveViewMode = isMobile ? 'grid' : viewMode
+
+  useEffect(() => {
+    mobileTopBarHiddenRef.current = isMobileTopBarHidden
+  }, [isMobileTopBarHidden])
+
+  useEffect(() => {
+    if (!isMobile) {
+      mobileTopBarHiddenRef.current = false
+      setIsMobileTopBarHidden(false)
+      return
+    }
+
+    const pageTopBar = pageTopBarRef.current
+    if (!pageTopBar) return
+    const scrollContainer = pageTopBar.closest('main')
+    if (!(scrollContainer instanceof HTMLElement)) return
+
+    lastScrollTopRef.current = Math.max(scrollContainer.scrollTop, 0)
+    let rafId: number | null = null
+    const threshold = 8
+
+    const handleScroll = () => {
+      if (rafId != null) return
+      rafId = window.requestAnimationFrame(() => {
+        const current = Math.max(scrollContainer.scrollTop, 0)
+        const delta = current - lastScrollTopRef.current
+        if (Math.abs(delta) < threshold) {
+          rafId = null
+          return
+        }
+
+        let nextHidden = mobileTopBarHiddenRef.current
+        if (current <= threshold) {
+          nextHidden = false
+        } else if (delta > 0) {
+          nextHidden = true
+        } else {
+          nextHidden = false
+        }
+
+        if (nextHidden !== mobileTopBarHiddenRef.current) {
+          mobileTopBarHiddenRef.current = nextHidden
+          setIsMobileTopBarHidden(nextHidden)
+        }
+        lastScrollTopRef.current = current
+        rafId = null
+      })
+    }
+
+    scrollContainer.addEventListener('scroll', handleScroll, { passive: true })
+    return () => {
+      scrollContainer.removeEventListener('scroll', handleScroll)
+      if (rafId != null) {
+        window.cancelAnimationFrame(rafId)
+      }
+    }
+  }, [isMobile])
 
   useEffect(() => {
     void fetchFolders()
   }, [fetchFolders, filters, page])
+
+  useEffect(() => {
+    const hasActiveBatchWorkflowJob = jobs.some((job) => {
+      if (job.type !== 'workflow') return false
+      if (TERMINAL_JOB_STATUS.has(job.status)) return false
+      const folderCount = Array.isArray(job.folder_ids) ? job.folder_ids.length : 0
+      return folderCount > 1 || job.total > 1 || job.done > 1
+    })
+    if (!hasActiveBatchWorkflowJob || workflowDefs.length > 0 || workflowDefsRequestedRef.current) return
+    workflowDefsRequestedRef.current = true
+    void fetchWorkflowDefs()
+  }, [fetchWorkflowDefs, jobs, workflowDefs.length])
 
   // GSAP Stagger Animation for items
   useEffect(() => {
@@ -917,7 +1138,15 @@ export default function FolderListPage() {
 
   return (
     <>
-      <div className="mb-6 flex flex-col gap-4 border-b-2 border-foreground pb-4 lg:flex-row lg:items-end lg:justify-between">
+      <div
+        ref={pageTopBarRef}
+        className={cn(
+          'mb-6 flex flex-col gap-4 border-b-2 border-foreground pb-4 lg:flex-row lg:items-end lg:justify-between',
+          isMobile && 'sticky top-0 z-30 bg-background pt-2 transition-transform duration-200 ease-out',
+          isMobile && isMobileTopBarHidden && '-translate-y-[calc(100%+1.5rem)]',
+          isMobile && !isMobileTopBarHidden && 'translate-y-0',
+        )}
+      >
         <div>
           <h1 className="text-3xl font-black tracking-tight uppercase">媒体文件夹</h1>
           <p className="mt-1 text-sm font-bold text-muted-foreground">
@@ -1129,7 +1358,7 @@ export default function FolderListPage() {
                         aria-label="全选"
                       />
                     </th>
-                    <th className="px-4 py-4 text-left font-black tracking-widest">鍚嶇О</th>
+                    <th className="px-4 py-4 text-left font-black tracking-widest">名称</th>
                     <th className="px-4 py-4 text-left font-black tracking-widest">分类 / 状态</th>
                     <th className="hidden px-4 py-4 text-left font-black tracking-widest sm:table-cell">文件数</th>
                     <th className="hidden px-4 py-4 text-left font-black tracking-widest md:table-cell">
@@ -1152,7 +1381,7 @@ export default function FolderListPage() {
                         <span>{getSortLabel(currentSortBy === 'updated_at', currentSortOrder === 'desc')}</span>
                       </button>
                     </th>
-                    <th className="px-4 py-4 text-left font-black tracking-widest">鎿嶄綔</th>
+                    <th className="px-4 py-4 text-left font-black tracking-widest">操作</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1203,6 +1432,11 @@ export default function FolderListPage() {
         </div>
 
         <div className="flex w-full flex-col gap-6 xl:w-80 xl:shrink-0">
+          <BatchWorkflowProgressPanel
+            jobs={jobs}
+            workflowDefs={workflowDefs}
+            onOpenJob={(jobId) => navigate(buildJobHistoryLink(jobId))}
+          />
           <RecentJobsPanel />
           <RecentLogsPanel />
         </div>

@@ -870,6 +870,89 @@ func TestFolderHandlerListTopLevelAggregatesWorkflowOutputsIntoSourceFolder(t *t
 	}
 }
 
+func TestFolderHandlerListTopLevelHidesPromotedWorkflowChildGhosts(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	database := newHandlerTestDB(t)
+	repo := repository.NewFolderRepository(database)
+	configRepo := repository.NewConfigRepository(database)
+	scheduledRepo := repository.NewScheduledWorkflowRepository(database)
+	router := setupRouter(repo, configRepo, scheduledRepo, nil, fs.NewMockAdapter())
+
+	ctx := context.Background()
+	for _, folder := range []*repository.Folder{
+		{
+			ID:             "ghost-video",
+			Path:           "/source/album/video",
+			SourceDir:      "/source",
+			RelativePath:   "album/video",
+			Name:           "video",
+			Category:       "video",
+			CategorySource: "workflow",
+			Status:         "pending",
+			VideoCount:     1,
+			TotalFiles:     1,
+		},
+		{
+			ID:             "ghost-photo",
+			Path:           "/source/album/photo",
+			SourceDir:      "/source",
+			RelativePath:   "album/photo",
+			Name:           "photo",
+			Category:       "photo",
+			CategorySource: "workflow",
+			Status:         "pending",
+			ImageCount:     1,
+			TotalFiles:     1,
+		},
+		{
+			ID:             "legit-workflow-root",
+			Path:           "/workflow-only/legit",
+			SourceDir:      "/workflow-only",
+			RelativePath:   "legit",
+			Name:           "legit",
+			Category:       "video",
+			CategorySource: "workflow",
+			Status:         "pending",
+			VideoCount:     1,
+			TotalFiles:     1,
+		},
+	} {
+		seedFolder(t, repo, folder)
+	}
+	if err := repo.UpdatePath(ctx, "ghost-video", "/target/video/album", "/target/video", "album"); err != nil {
+		t.Fatalf("UpdatePath(ghost-video) error = %v", err)
+	}
+	if err := repo.UpdatePath(ctx, "ghost-photo", "/target/photo/album", "/target/photo", "album"); err != nil {
+		t.Fatalf("UpdatePath(ghost-photo) error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/folders?top_level_only=true&page=1&limit=10", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body = %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var payload struct {
+		Data  []repository.Folder `json:"data"`
+		Total int                 `json:"total"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if payload.Total != 1 {
+		t.Fatalf("total = %d, want 1", payload.Total)
+	}
+	if len(payload.Data) != 1 {
+		t.Fatalf("len(data) = %d, want 1", len(payload.Data))
+	}
+	if payload.Data[0].ID != "legit-workflow-root" {
+		t.Fatalf("data[0].ID = %q, want legit-workflow-root", payload.Data[0].ID)
+	}
+}
+
 func TestFolderHandlerUpdateStatusDoneRequiresPassedOutputCheck(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
