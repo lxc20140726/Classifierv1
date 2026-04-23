@@ -1571,6 +1571,133 @@ func TestMoveNodeExecutorMergeValidationAndArchiveFlatten(t *testing.T) {
 			t.Fatalf("error = %q, want multiple root_path", err.Error())
 		}
 	})
+
+	t.Run("folder_path_root_does_not_repoint_child_folder_records_to_merged_root", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := context.Background()
+		database := newServiceTestDB(t)
+		folderRepo := repository.NewFolderRepository(database)
+
+		root := t.TempDir()
+		sourceDir := filepath.Join(root, "source")
+		sourceRoot := filepath.Join(sourceDir, "Album")
+		videoPath := filepath.Join(sourceRoot, "video")
+		photoPath := filepath.Join(sourceRoot, "photo")
+		targetDir := filepath.Join(root, "target")
+		mustMkdirAll(t, videoPath)
+		mustMkdirAll(t, photoPath)
+		if err := os.WriteFile(filepath.Join(videoPath, "movie.mp4"), []byte("video"), 0o644); err != nil {
+			t.Fatalf("os.WriteFile(video) error = %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(photoPath, "cover.jpg"), []byte("photo"), 0o644); err != nil {
+			t.Fatalf("os.WriteFile(photo) error = %v", err)
+		}
+
+		rootFolder := &repository.Folder{
+			ID:             "folder-merge-root",
+			Path:           sourceRoot,
+			SourceDir:      sourceDir,
+			RelativePath:   "Album",
+			Name:           "Album",
+			Category:       "mixed",
+			CategorySource: "auto",
+			Status:         "pending",
+		}
+		childVideo := &repository.Folder{
+			ID:             "folder-merge-video",
+			Path:           videoPath,
+			SourceDir:      sourceDir,
+			RelativePath:   "Album/video",
+			Name:           "video",
+			Category:       "video",
+			CategorySource: "workflow",
+			Status:         "pending",
+			VideoCount:     1,
+			TotalFiles:     1,
+		}
+		childPhoto := &repository.Folder{
+			ID:             "folder-merge-photo",
+			Path:           photoPath,
+			SourceDir:      sourceDir,
+			RelativePath:   "Album/photo",
+			Name:           "photo",
+			Category:       "photo",
+			CategorySource: "workflow",
+			Status:         "pending",
+			ImageCount:     1,
+			TotalFiles:     1,
+		}
+		for _, folder := range []*repository.Folder{rootFolder, childVideo, childPhoto} {
+			if err := folderRepo.Upsert(ctx, folder); err != nil {
+				t.Fatalf("folderRepo.Upsert(%s) error = %v", folder.ID, err)
+			}
+		}
+
+		_, err := newPhase4MoveNodeExecutor(fs.NewOSAdapter(), folderRepo).Execute(ctx, NodeExecutionInput{
+			Node:   repository.WorkflowGraphNode{Config: map[string]any{"target_dir": targetDir}},
+			Folder: rootFolder,
+			Inputs: testInputs(map[string]any{"items": []ProcessingItem{
+				{
+					SourcePath:         videoPath,
+					CurrentPath:        videoPath,
+					FolderID:           childVideo.ID,
+					FolderName:         childVideo.Name,
+					TargetName:         childVideo.Name,
+					Category:           "video",
+					RootPath:           sourceRoot,
+					RelativePath:       "video",
+					SourceKind:         ProcessingItemSourceKindDirectory,
+					OriginalSourcePath: videoPath,
+					Files:              []FileEntry{{Name: "movie.mp4", Ext: ".mp4", SizeBytes: 5}},
+				},
+				{
+					SourcePath:         photoPath,
+					CurrentPath:        photoPath,
+					FolderID:           childPhoto.ID,
+					FolderName:         childPhoto.Name,
+					TargetName:         childPhoto.Name,
+					Category:           "photo",
+					RootPath:           sourceRoot,
+					RelativePath:       "photo",
+					SourceKind:         ProcessingItemSourceKindDirectory,
+					OriginalSourcePath: photoPath,
+					Files:              []FileEntry{{Name: "cover.jpg", Ext: ".jpg", SizeBytes: 5}},
+				},
+			}}),
+		})
+		if err != nil {
+			t.Fatalf("Execute() error = %v", err)
+		}
+
+		targetRoot := filepath.Join(targetDir, "Album")
+		for _, targetPath := range []string{filepath.Join(targetRoot, "movie.mp4"), filepath.Join(targetRoot, "cover.jpg")} {
+			if !pathExists(t, targetPath) {
+				t.Fatalf("moved artifact %q should exist", targetPath)
+			}
+		}
+
+		updatedVideo, err := folderRepo.GetByID(ctx, childVideo.ID)
+		if err != nil {
+			t.Fatalf("folderRepo.GetByID(video) error = %v", err)
+		}
+		updatedPhoto, err := folderRepo.GetByID(ctx, childPhoto.ID)
+		if err != nil {
+			t.Fatalf("folderRepo.GetByID(photo) error = %v", err)
+		}
+		if normalizeWorkflowPath(updatedVideo.Path) != normalizeWorkflowPath(videoPath) {
+			t.Fatalf("video folder path = %q, want %q", updatedVideo.Path, videoPath)
+		}
+		if normalizeWorkflowPath(updatedPhoto.Path) != normalizeWorkflowPath(photoPath) {
+			t.Fatalf("photo folder path = %q, want %q", updatedPhoto.Path, photoPath)
+		}
+		if normalizeWorkflowPath(updatedVideo.RelativePath) != "Album/video" {
+			t.Fatalf("video relative_path = %q, want Album/video", updatedVideo.RelativePath)
+		}
+		if normalizeWorkflowPath(updatedPhoto.RelativePath) != "Album/photo" {
+			t.Fatalf("photo relative_path = %q, want Album/photo", updatedPhoto.RelativePath)
+		}
+	})
 }
 
 func TestCompressNodeExecutorUnsupportedAndArchiveNaming(t *testing.T) {

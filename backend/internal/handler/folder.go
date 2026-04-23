@@ -551,9 +551,22 @@ func (h *FolderHandler) aggregateTopLevelFolders(ctx context.Context, items []*r
 	}
 
 	plans := make(map[string]aggregatePlan, len(grouped))
+	hiddenWorkflowOnlyIDs := make(map[string]struct{})
 	for key, group := range grouped {
 		base := selectTopLevelAggregateBase(group)
 		if base == nil {
+			for _, item := range group {
+				if item == nil || !strings.EqualFold(strings.TrimSpace(item.CategorySource), "workflow") {
+					continue
+				}
+				observations, err := observationReader.ListPathObservationsByFolderID(ctx, item.ID)
+				if err != nil {
+					return nil, err
+				}
+				if folderLooksLikePromotedWorkflowChild(item, observations) {
+					hiddenWorkflowOnlyIDs[strings.TrimSpace(item.ID)] = struct{}{}
+				}
+			}
 			continue
 		}
 
@@ -596,6 +609,10 @@ func (h *FolderHandler) aggregateTopLevelFolders(ctx context.Context, items []*r
 		}
 		itemID := strings.TrimSpace(item.ID)
 		if _, ok := consumed[itemID]; ok {
+			continue
+		}
+		if _, ok := hiddenWorkflowOnlyIDs[itemID]; ok {
+			consumed[itemID] = struct{}{}
 			continue
 		}
 
@@ -646,6 +663,54 @@ func selectTopLevelAggregateBase(group []*repository.Folder) *repository.Folder 
 		base = item
 	}
 	return base
+}
+
+func folderLooksLikePromotedWorkflowChild(folder *repository.Folder, observations []*repository.FolderPathObservation) bool {
+	if folder == nil || !strings.EqualFold(strings.TrimSpace(folder.CategorySource), "workflow") {
+		return false
+	}
+	currentKey := normalizeFolderAggregateKey(folder.RelativePath)
+	if currentKey == "" || strings.Contains(currentKey, "/") {
+		return false
+	}
+
+	hasCurrentTopLevelObservation := false
+	for _, observation := range observations {
+		if observation == nil {
+			continue
+		}
+		observationKey := normalizeFolderAggregateKey(observation.RelativePath)
+		if observation.IsCurrent && observationKey == currentKey {
+			hasCurrentTopLevelObservation = true
+			continue
+		}
+		if observationLooksNestedUnderAggregateKey(currentKey, observationKey, observation.Path) {
+			return true
+		}
+	}
+
+	return !hasCurrentTopLevelObservation && observationLooksNestedUnderAggregateKey(currentKey, "", folder.Path)
+}
+
+func observationLooksNestedUnderAggregateKey(currentKey, observationKey, observationPath string) bool {
+	if currentKey == "" {
+		return false
+	}
+	if strings.HasPrefix(observationKey, currentKey+"/") {
+		return true
+	}
+
+	normalizedPath := normalizeFolderAggregatePath(observationPath)
+	if normalizedPath == "" {
+		return false
+	}
+	segments := strings.Split(normalizedPath, "/")
+	for index := 0; index < len(segments)-1; index++ {
+		if strings.EqualFold(strings.TrimSpace(segments[index]), currentKey) {
+			return true
+		}
+	}
+	return false
 }
 
 func folderHistoricallyBelongsToRoot(rootPath string, observations []*repository.FolderPathObservation) bool {

@@ -1129,7 +1129,7 @@ export default function FolderListPage() {
                         aria-label="全选"
                       />
                     </th>
-                    <th className="px-4 py-4 text-left font-black tracking-widest">鍚嶇О</th>
+                    <th className="px-4 py-4 text-left font-black tracking-widest">名称</th>
                     <th className="px-4 py-4 text-left font-black tracking-widest">分类 / 状态</th>
                     <th className="hidden px-4 py-4 text-left font-black tracking-widest sm:table-cell">文件数</th>
                     <th className="hidden px-4 py-4 text-left font-black tracking-widest md:table-cell">
@@ -1152,7 +1152,7 @@ export default function FolderListPage() {
                         <span>{getSortLabel(currentSortBy === 'updated_at', currentSortOrder === 'desc')}</span>
                       </button>
                     </th>
-                    <th className="px-4 py-4 text-left font-black tracking-widest">鎿嶄綔</th>
+                    <th className="px-4 py-4 text-left font-black tracking-widest">操作</th>
                   </tr>
                 </thead>
                 <tbody>
