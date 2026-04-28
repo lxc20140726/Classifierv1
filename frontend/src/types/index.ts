@@ -4,7 +4,7 @@ export type CategorySource = 'auto' | 'manual' | 'workflow'
 export type FolderSortBy = 'updated_at' | 'total_size'
 export type SortOrder = 'asc' | 'desc'
 export type JobStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'partial' | 'cancelled' | 'waiting_input' | 'rolled_back'
-export type WorkflowStageStatus = 'not_run' | 'running' | 'succeeded' | 'failed' | 'waiting_input' | 'partial' | 'rolled_back'
+export type WorkflowStageStatus = 'not_run' | 'running' | 'succeeded' | 'failed' | 'waiting_input' | 'partial' | 'rolled_back' | 'cancelled'
 
 export interface WorkflowStageSummary {
   status: WorkflowStageStatus
@@ -123,6 +123,8 @@ export interface JobProgress {
   done: number
   total: number
   failed: number
+  started_at?: string | null
+  finished_at?: string | null
   updated_at: string
 }
 
@@ -151,6 +153,9 @@ export interface JobDoneEvent {
   processed?: number
   failed?: number
   total: number
+  started_at?: string | null
+  finished_at?: string | null
+  updated_at?: string
 }
 
 export interface AuditLog {
@@ -171,7 +176,7 @@ export interface AuditLog {
   created_at: string
 }
 
-export type WorkflowRunStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'partial' | 'waiting_input' | 'rolled_back'
+export type WorkflowRunStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'partial' | 'waiting_input' | 'rolled_back' | 'cancelled'
 export type NodeRunStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'skipped' | 'waiting_input'
 export type NodeType =
   | 'trigger'

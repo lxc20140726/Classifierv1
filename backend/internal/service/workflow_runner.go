@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"reflect"
@@ -191,6 +192,8 @@ type WorkflowRunnerService struct {
 	mappingSvc    OutputMappingBuilder
 	validatorSvc  OutputValidator
 	completionSvc FolderCompletionUpdater
+	activeJobsMu  sync.Mutex
+	activeJobs    map[string]context.CancelFunc
 }
 
 func NewWorkflowRunnerService(
@@ -217,6 +220,7 @@ func NewWorkflowRunnerService(
 		broker:        broker,
 		auditSvc:      auditSvc,
 		typeRegistry:  NewTypeRegistry(),
+		activeJobs:    make(map[string]context.CancelFunc),
 	}
 
 	svc.RegisterExecutor(&triggerNodeExecutor{})
@@ -346,11 +350,109 @@ func (s *WorkflowRunnerService) StartJob(ctx context.Context, input StartWorkflo
 		return "", fmt.Errorf("workflowRunner.StartJob create job: %w", err)
 	}
 
-	go s.runJob(context.Background(), jobID, input.WorkflowDefID, sourceDir, folderIDs)
+	runCtx, cancel := context.WithCancel(context.Background())
+	s.registerActiveJob(jobID, cancel)
+	go s.runJob(runCtx, jobID, input.WorkflowDefID, sourceDir, folderIDs)
 	return jobID, nil
 }
 
+func (s *WorkflowRunnerService) registerActiveJob(jobID string, cancel context.CancelFunc) {
+	if s == nil || strings.TrimSpace(jobID) == "" || cancel == nil {
+		return
+	}
+	s.activeJobsMu.Lock()
+	defer s.activeJobsMu.Unlock()
+	if s.activeJobs == nil {
+		s.activeJobs = make(map[string]context.CancelFunc)
+	}
+	s.activeJobs[jobID] = cancel
+}
+
+func (s *WorkflowRunnerService) unregisterActiveJob(jobID string) {
+	if s == nil || strings.TrimSpace(jobID) == "" {
+		return
+	}
+	s.activeJobsMu.Lock()
+	defer s.activeJobsMu.Unlock()
+	delete(s.activeJobs, jobID)
+}
+
+func (s *WorkflowRunnerService) cancelActiveJob(jobID string) {
+	if s == nil || strings.TrimSpace(jobID) == "" {
+		return
+	}
+	s.activeJobsMu.Lock()
+	cancel := s.activeJobs[jobID]
+	delete(s.activeJobs, jobID)
+	s.activeJobsMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
+func (s *WorkflowRunnerService) CancelJob(ctx context.Context, jobID string) error {
+	normalizedJobID := strings.TrimSpace(jobID)
+	if normalizedJobID == "" {
+		return fmt.Errorf("workflowRunner.CancelJob: job_id is required")
+	}
+
+	job, err := s.jobs.GetByID(ctx, normalizedJobID)
+	if err != nil {
+		return fmt.Errorf("workflowRunner.CancelJob get job %q: %w", normalizedJobID, err)
+	}
+	if job == nil {
+		return fmt.Errorf("workflowRunner.CancelJob get job %q: %w", normalizedJobID, repository.ErrNotFound)
+	}
+	if isTerminalWorkflowJobStatus(job.Status) {
+		return nil
+	}
+
+	s.cancelActiveJob(normalizedJobID)
+	_ = s.cancelWorkflowRunsForJob(ctx, normalizedJobID)
+	if err := s.jobs.UpdateStatus(ctx, normalizedJobID, "cancelled", "用户停止任务"); err != nil {
+		return fmt.Errorf("workflowRunner.CancelJob update job %q: %w", normalizedJobID, err)
+	}
+	s.publishJobProgressByID(ctx, normalizedJobID)
+	s.publishJobDoneByID(ctx, normalizedJobID)
+	return nil
+}
+
+func isTerminalWorkflowJobStatus(status string) bool {
+	switch strings.TrimSpace(status) {
+	case "succeeded", "failed", "partial", "cancelled", "rolled_back":
+		return true
+	default:
+		return false
+	}
+}
+
+func isContextCanceled(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+func (s *WorkflowRunnerService) cancelWorkflowRunsForJob(ctx context.Context, jobID string) error {
+	runs, _, err := s.workflowRuns.List(ctx, repository.WorkflowRunListFilter{JobID: jobID, Page: 1, Limit: 2000})
+	if err != nil {
+		return fmt.Errorf("list workflow runs by job %q: %w", jobID, err)
+	}
+
+	for _, run := range runs {
+		if run == nil {
+			continue
+		}
+		switch strings.TrimSpace(run.Status) {
+		case "pending", "running", "waiting_input":
+			if err := s.workflowRuns.UpdateStatus(ctx, run.ID, "cancelled", run.LastNodeID); err != nil {
+				return fmt.Errorf("cancel workflow run %q: %w", run.ID, err)
+			}
+			s.publishWorkflowRunUpdated(ctx, run.ID)
+		}
+	}
+	return nil
+}
+
 func (s *WorkflowRunnerService) runJob(ctx context.Context, jobID, workflowDefID, sourceDir string, folderIDs []string) {
+	defer s.unregisterActiveJob(jobID)
 	_ = s.jobs.UpdateStatus(ctx, jobID, "running", "")
 	s.publishJobProgressByID(ctx, jobID)
 
@@ -397,12 +499,22 @@ func (s *WorkflowRunnerService) runJob(ctx context.Context, jobID, workflowDefID
 
 	for _, folderID := range validFolderIDs {
 		folderID := folderID
+		if ctx.Err() != nil {
+			break
+		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 
-			sem <- struct{}{}
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
 			defer func() { <-sem }()
+			if ctx.Err() != nil {
+				return
+			}
 
 			run := &repository.WorkflowRun{
 				ID:            uuid.NewString(),
@@ -455,6 +567,13 @@ func (s *WorkflowRunnerService) runJob(ctx context.Context, jobID, workflowDefID
 	}
 
 	wg.Wait()
+	if ctx.Err() != nil {
+		_ = s.cancelWorkflowRunsForJob(context.Background(), jobID)
+		_ = s.jobs.UpdateStatus(context.Background(), jobID, "cancelled", "用户停止任务")
+		s.publishJobProgressByID(context.Background(), jobID)
+		s.publishJobDoneByID(context.Background(), jobID)
+		return
+	}
 	_ = s.refreshWorkflowJobStatus(ctx, jobID)
 	s.publishJobDoneByID(ctx, jobID)
 }
@@ -610,12 +729,14 @@ func (s *WorkflowRunnerService) ResumeWorkflowRun(ctx context.Context, workflowR
 }
 
 func (s *WorkflowRunnerService) ResumeWorkflowRunWithData(ctx context.Context, workflowRunID string, resumeData map[string]any) error {
-	if resumeData != nil {
-		waitingNodeRun, err := s.nodeRuns.GetWaitingInputByWorkflowRunID(ctx, workflowRunID)
-		if err != nil {
+	waitingNodeRun, err := s.nodeRuns.GetWaitingInputByWorkflowRunID(ctx, workflowRunID)
+	if err != nil {
+		if !errors.Is(err, repository.ErrNotFound) || resumeData != nil {
 			return fmt.Errorf("workflowRunner.ResumeWorkflowRunWithData get waiting node run for %q: %w", workflowRunID, err)
 		}
+	}
 
+	if resumeData != nil && waitingNodeRun != nil {
 		persisted := make(map[string]any)
 		if strings.TrimSpace(waitingNodeRun.ResumeData) != "" {
 			if err := json.Unmarshal([]byte(waitingNodeRun.ResumeData), &persisted); err != nil {
@@ -632,6 +753,11 @@ func (s *WorkflowRunnerService) ResumeWorkflowRunWithData(ctx context.Context, w
 		}
 		if err := s.nodeRuns.UpdateResumeData(ctx, waitingNodeRun.ID, string(encoded)); err != nil {
 			return fmt.Errorf("workflowRunner.ResumeWorkflowRunWithData persist resume data for node run %q: %w", waitingNodeRun.ID, err)
+		}
+	}
+	if waitingNodeRun != nil {
+		if err := s.nodeRuns.FinishWaitingInput(ctx, waitingNodeRun.ID); err != nil {
+			return fmt.Errorf("workflowRunner.ResumeWorkflowRunWithData finish waiting node run %q: %w", waitingNodeRun.ID, err)
 		}
 	}
 
@@ -742,6 +868,9 @@ func (s *WorkflowRunnerService) executeWorkflowRunWithGraph(
 	resume bool,
 	graphOverride *repository.WorkflowGraph,
 ) (retErr error) {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	run, err := s.workflowRuns.GetByID(ctx, workflowRunID)
 	if err != nil {
 		return fmt.Errorf("workflowRunner.executeWorkflowRun get workflow run %q: %w", workflowRunID, err)
@@ -790,6 +919,12 @@ func (s *WorkflowRunnerService) executeWorkflowRunWithGraph(
 	}
 	defer func() {
 		if retErr != nil {
+			if isContextCanceled(retErr) {
+				_ = s.workflowRuns.UpdateStatus(context.Background(), run.ID, "cancelled", strings.TrimSpace(workflowFailureNodeID))
+				s.publishWorkflowRunUpdated(context.Background(), run.ID)
+				_ = s.writeWorkflowRunAudit(context.Background(), run, folder, "workflow.run.cancelled", "cancelled", time.Since(runStartedAt).Milliseconds(), nil)
+				return
+			}
 			reason := strings.TrimSpace(workflowFailureReason)
 			if reason == "" {
 				reason = strings.TrimSpace(retErr.Error())
@@ -846,6 +981,9 @@ func (s *WorkflowRunnerService) executeWorkflowRunWithGraph(
 	}
 
 	for _, level := range levels {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		levelNodes := make([]repository.WorkflowGraphNode, 0, len(level))
 		for _, node := range level {
 			if !startNow {
@@ -959,6 +1097,10 @@ func (s *WorkflowRunnerService) executeWorkflowNode(
 	nodeStatusCache map[string]string,
 	outputMu *sync.RWMutex,
 ) nodeExecutionResult {
+	if err := ctx.Err(); err != nil {
+		return nodeExecutionResult{Err: err, NodeID: node.ID, Reason: "任务已停止"}
+	}
+
 	outputMu.RLock()
 	inputs, inputSources := s.resolveNodeInputs(node, outputCache, nodeStatusCache, run.SourceDir)
 	outputMu.RUnlock()
@@ -1182,6 +1324,9 @@ func (s *WorkflowRunnerService) executeWorkflowNode(
 		execOutput, execErr = executor.Execute(ctx, execInput)
 	}
 	if execErr != nil {
+		if isContextCanceled(execErr) {
+			return nodeExecutionResult{Err: execErr, NodeID: node.ID, Reason: "任务已停止"}
+		}
 		_ = s.nodeRuns.UpdateFinish(ctx, nodeRun.ID, "failed", "", execErr.Error())
 		_ = s.createNodeSnapshot(ctx, run, nodeRun, "post", folder, map[string]TypedValue{"error": {Type: PortTypeString, Value: execErr.Error()}})
 		_ = s.writeNodeExecutionAudit(ctx, execInput, folder, nil, execErr, nodeStartedAt, "")
@@ -1202,6 +1347,9 @@ func (s *WorkflowRunnerService) executeWorkflowNode(
 			NodeID: node.ID,
 			Reason: execErr.Error(),
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nodeExecutionResult{Err: err, NodeID: node.ID, Reason: "任务已停止"}
 	}
 
 	if execOutput.Status == "" {
@@ -2222,12 +2370,14 @@ func (s *WorkflowRunnerService) publishJobProgressByID(ctx context.Context, jobI
 	}
 
 	s.publish("job.progress", map[string]any{
-		"job_id":     job.ID,
-		"status":     strings.TrimSpace(job.Status),
-		"done":       job.Done,
-		"total":      job.Total,
-		"failed":     job.Failed,
-		"updated_at": job.UpdatedAt,
+		"job_id":      job.ID,
+		"status":      strings.TrimSpace(job.Status),
+		"done":        job.Done,
+		"total":       job.Total,
+		"failed":      job.Failed,
+		"started_at":  job.StartedAt,
+		"finished_at": job.FinishedAt,
+		"updated_at":  job.UpdatedAt,
 	})
 }
 
@@ -2238,11 +2388,14 @@ func (s *WorkflowRunnerService) publishJobDoneByID(ctx context.Context, jobID st
 	}
 
 	s.publish("job.done", map[string]any{
-		"job_id":    job.ID,
-		"status":    strings.TrimSpace(job.Status),
-		"processed": job.Done,
-		"failed":    job.Failed,
-		"total":     job.Total,
+		"job_id":      job.ID,
+		"status":      strings.TrimSpace(job.Status),
+		"processed":   job.Done,
+		"failed":      job.Failed,
+		"total":       job.Total,
+		"started_at":  job.StartedAt,
+		"finished_at": job.FinishedAt,
+		"updated_at":  job.UpdatedAt,
 	})
 }
 
@@ -2277,6 +2430,7 @@ func evaluateWorkflowJobStatus(job *repository.Job, runs []*repository.WorkflowR
 	hasWaiting := false
 	hasRunning := false
 	hasPartialOrRollback := false
+	hasCancelled := false
 	firstFailedErr := strings.TrimSpace(job.Error)
 
 	for _, run := range runs {
@@ -2290,6 +2444,8 @@ func evaluateWorkflowJobStatus(job *repository.Job, runs []*repository.WorkflowR
 			hasRunning = true
 		case "partial", "rolled_back":
 			hasPartialOrRollback = true
+		case "cancelled":
+			hasCancelled = true
 		case "failed":
 			if firstFailedErr == "" {
 				firstFailedErr = strings.TrimSpace(run.Error)
@@ -2302,6 +2458,9 @@ func evaluateWorkflowJobStatus(job *repository.Job, runs []*repository.WorkflowR
 	}
 	if hasRunning {
 		return "running", ""
+	}
+	if hasCancelled && job.Status == "cancelled" {
+		return "cancelled", strings.TrimSpace(job.Error)
 	}
 	if job.Total > 0 && (job.Done+job.Failed) < job.Total {
 		return "running", ""
@@ -2317,6 +2476,9 @@ func evaluateWorkflowJobStatus(job *repository.Job, runs []*repository.WorkflowR
 	}
 	if hasPartialOrRollback {
 		return "partial", ""
+	}
+	if hasCancelled {
+		return "cancelled", strings.TrimSpace(job.Error)
 	}
 	return "succeeded", ""
 }
@@ -2568,6 +2730,8 @@ func workflowRunStatusToFolderStatus(runStatus string) (string, bool) {
 	case "failed":
 		return "pending", true
 	case "rolled_back":
+		return "pending", true
+	case "cancelled":
 		return "pending", true
 	default:
 		return "", false

@@ -852,6 +852,7 @@ export const useWorkflowRunStore = create<WorkflowRunStore>((set, get) => ({
         updatedNodes = existing.map((nodeRun, index) => {
           if (index !== idx) return nodeRun
           const terminal = status !== 'running'
+          const finishedAt = terminal && status !== 'waiting_input' ? now : nodeRun.finished_at
           return {
             ...nodeRun,
             id: nodeRun.id.trim() === '' && nodeRunID !== '' ? nodeRunID : nodeRun.id,
@@ -862,7 +863,7 @@ export const useWorkflowRunStore = create<WorkflowRunStore>((set, get) => ({
             progress_percent: terminal ? 100 : nodeRun.progress_percent,
             progress_done: terminal ? (nodeRun.progress_total ?? nodeRun.progress_done) : nodeRun.progress_done,
             started_at: status === 'running' ? (nodeRun.started_at ?? now) : nodeRun.started_at,
-            finished_at: status !== 'running' ? now : nodeRun.finished_at,
+            finished_at: finishedAt,
           }
         })
       } else {
@@ -878,7 +879,7 @@ export const useWorkflowRunStore = create<WorkflowRunStore>((set, get) => ({
           error: event.error ?? '',
           progress_percent: status !== 'running' ? 100 : undefined,
           started_at: status === 'running' ? now : null,
-          finished_at: status !== 'running' ? now : null,
+          finished_at: status !== 'running' && status !== 'waiting_input' ? now : null,
           created_at: now,
         }
         updatedNodes = [...existing, placeholder]

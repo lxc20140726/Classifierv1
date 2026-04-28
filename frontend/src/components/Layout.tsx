@@ -59,28 +59,28 @@ export function Layout() {
         onToggleCollapsed={() => setDesktopSidebarCollapsed((prev) => !prev)}
         onCloseMobile={() => setMobileSidebarOpen(false)}
       />
+      <header className="fixed left-4 right-4 top-4 z-40 flex items-center justify-between border-2 border-foreground bg-card px-3 py-2 shadow-hard sm:left-5 sm:right-5 lg:hidden">
+        <button
+          type="button"
+          onClick={() => {
+            setMobileSidebarPath(location.pathname)
+            setMobileSidebarOpen(true)
+          }}
+          className="inline-flex h-9 w-9 items-center justify-center border-2 border-foreground bg-background transition-all hover:bg-foreground hover:text-background"
+          aria-label={'\u6253\u5f00\u4fa7\u8fb9\u680f'}
+          title={'\u6253\u5f00\u4fa7\u8fb9\u680f'}
+        >
+          <Menu className="h-4 w-4" />
+        </button>
+        <div className="min-w-0 text-right">
+          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">CLASSIFIER</p>
+          <p className="truncate text-sm font-black">{pageTitle}</p>
+        </div>
+      </header>
       <main
         ref={mainRef}
-        className="relative flex-1 min-w-0 max-w-full overflow-y-auto overflow-x-hidden px-4 py-4 sm:px-5 sm:py-5 md:px-6 md:py-6 lg:px-8 lg:py-8"
+        className="relative flex-1 min-w-0 max-w-full overflow-y-auto overflow-x-hidden px-4 pb-4 pt-[5.75rem] sm:px-5 sm:pb-5 sm:pt-[6rem] md:px-6 md:pb-6 md:pt-[6rem] lg:px-8 lg:py-8"
       >
-        <header className="mb-4 flex items-center justify-between border-2 border-foreground bg-card px-3 py-2 shadow-hard lg:hidden">
-          <button
-            type="button"
-            onClick={() => {
-              setMobileSidebarPath(location.pathname)
-              setMobileSidebarOpen(true)
-            }}
-            className="inline-flex h-9 w-9 items-center justify-center border-2 border-foreground bg-background transition-all hover:bg-foreground hover:text-background"
-            aria-label={'\u6253\u5f00\u4fa7\u8fb9\u680f'}
-            title={'\u6253\u5f00\u4fa7\u8fb9\u680f'}
-          >
-            <Menu className="h-4 w-4" />
-          </button>
-          <div className="min-w-0 text-right">
-            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">CLASSIFIER</p>
-            <p className="truncate text-sm font-black">{pageTitle}</p>
-          </div>
-        </header>
         <Outlet />
       </main>
       <ToastList />

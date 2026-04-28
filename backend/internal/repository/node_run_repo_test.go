@@ -108,6 +108,30 @@ func TestNodeRunRepository_CRUDFilterAndTransitions(t *testing.T) {
 	if updated.ProgressUpdatedAt == nil {
 		t.Fatalf("progress_updated_at = nil, want non-nil")
 	}
+
+	if err := repo.UpdateStart(ctx, "nr-2", `{"wait":true}`); err != nil {
+		t.Fatalf("UpdateStart(nr-2) error = %v", err)
+	}
+	if err := repo.UpdateFinish(ctx, "nr-2", "waiting_input", `{"pending":true}`, "等待确认"); err != nil {
+		t.Fatalf("UpdateFinish(waiting_input) error = %v", err)
+	}
+	waitingAfterFinish, err := repo.GetByID(ctx, "nr-2")
+	if err != nil {
+		t.Fatalf("GetByID(nr-2 waiting) error = %v", err)
+	}
+	if waitingAfterFinish.FinishedAt != nil {
+		t.Fatalf("waiting_input finished_at = %#v, want nil before resume", waitingAfterFinish.FinishedAt)
+	}
+	if err := repo.FinishWaitingInput(ctx, "nr-2"); err != nil {
+		t.Fatalf("FinishWaitingInput() error = %v", err)
+	}
+	waitingAfterResume, err := repo.GetByID(ctx, "nr-2")
+	if err != nil {
+		t.Fatalf("GetByID(nr-2 resumed) error = %v", err)
+	}
+	if waitingAfterResume.FinishedAt == nil {
+		t.Fatalf("waiting_input finished_at = nil, want non-nil after resume")
+	}
 }
 
 func TestNodeRunRepository_NotFoundBranches(t *testing.T) {
@@ -134,6 +158,9 @@ func TestNodeRunRepository_NotFoundBranches(t *testing.T) {
 	}
 	if err := repo.UpdateFinish(ctx, "missing", "failed", `{}`, "boom"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("UpdateFinish(missing) error = %v, want ErrNotFound", err)
+	}
+	if err := repo.FinishWaitingInput(ctx, "missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("FinishWaitingInput(missing) error = %v, want ErrNotFound", err)
 	}
 	if err := repo.UpdateResumeData(ctx, "missing", `{}`); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("UpdateResumeData(missing) error = %v, want ErrNotFound", err)

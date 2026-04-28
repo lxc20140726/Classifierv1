@@ -18,6 +18,9 @@ import type {
 interface JobProgressEvent extends ScanProgressEvent {
   status: JobDoneEvent['status']
   failed?: number
+  started_at?: string | null
+  finished_at?: string | null
+  updated_at?: string
 }
 
 interface JobErrorEvent extends ScanProgressEvent {
@@ -74,7 +77,9 @@ export function useSSE() {
           done: payload.done,
           total: payload.total,
           failed: payload.failed ?? 0,
-          updated_at: new Date().toISOString(),
+          started_at: payload.started_at,
+          finished_at: payload.finished_at,
+          updated_at: payload.updated_at ?? new Date().toISOString(),
         })
       })
 
@@ -82,11 +87,14 @@ export function useSSE() {
         const payload = JSON.parse(event.data) as JobDoneEvent
         useJobStore.getState().handleJobDone(payload)
         useFolderStore.getState().handleScanDone()
+        const isCancelled = payload.status === 'cancelled'
         useNotificationStore.getState().pushNotification({
-          level: payload.status === 'partial' ? 'info' : 'success',
-          title: payload.status === 'partial' ? '任务部分完成' : '任务完成',
+          level: payload.status === 'partial' || isCancelled ? 'info' : 'success',
+          title: isCancelled ? '任务已停止' : payload.status === 'partial' ? '任务部分完成' : '任务完成',
           message:
-            payload.status === 'partial'
+            isCancelled
+              ? `任务 ${payload.job_id} 已停止。`
+              : payload.status === 'partial'
               ? `任务 ${payload.job_id} 已完成，但有 ${payload.failed ?? 0} 个目录失败。`
               : `任务 ${payload.job_id} 已完成，共处理 ${payload.total} 个目录。`,
           jobId: payload.job_id,
@@ -146,6 +154,7 @@ export function useSSE() {
           || payload.status === 'waiting_input'
           || payload.status === 'rolled_back'
           || payload.status === 'partial'
+          || payload.status === 'cancelled'
           || payload.status === 'failed'
         ) {
           const folderId = payload.folder_id?.trim() ?? ''

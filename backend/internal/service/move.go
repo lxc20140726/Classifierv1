@@ -98,11 +98,11 @@ func (s *MoveService) MoveFolders(ctx context.Context, input MoveFolderInput) er
 		}
 	}
 
-	s.publish("job.done", map[string]any{
+	s.publish("job.done", attachJobTiming(ctx, s.jobs, input.JobID, map[string]any{
 		"job_id": input.JobID,
 		"status": status,
 		"total":  total,
-	})
+	}))
 
 	return nil
 }

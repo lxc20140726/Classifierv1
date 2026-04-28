@@ -288,6 +288,7 @@ func TestFolderRepositoryListWorkflowSummariesByFolderIDs(t *testing.T) {
 		{ID: "f-not-run", Path: "/media/not-run", Name: "not-run", Category: "other", CategorySource: "auto", Status: "pending"},
 		{ID: "f-classify", Path: "/media/classify", Name: "classify", Category: "other", CategorySource: "auto", Status: "pending"},
 		{ID: "f-process", Path: "/media/process", Name: "process", Category: "other", CategorySource: "auto", Status: "pending"},
+		{ID: "f-process-router", Path: "/media/process-router", Name: "process-router", Category: "other", CategorySource: "auto", Status: "pending"},
 		{ID: "f-failed", Path: "/media/failed", Name: "failed", Category: "other", CategorySource: "auto", Status: "pending"},
 		{ID: "f-wait", Path: "/media/wait", Name: "wait", Category: "other", CategorySource: "auto", Status: "pending"},
 		{ID: "f-rolled", Path: "/media/rolled", Name: "rolled", Category: "other", CategorySource: "auto", Status: "pending"},
@@ -344,6 +345,12 @@ id, job_id, folder_id, operation_type, before_state, after_state, detail, status
 	mustCreateNodeRun(&NodeRun{ID: "nr-process-move", WorkflowRunID: "wr-process", NodeID: "move", NodeType: "move-node", Sequence: 1, Status: "succeeded"})
 	mustSetWorkflowRunUpdatedAt("wr-process", "2026-01-01 00:00:02")
 
+	mustCreateWorkflowRun(&WorkflowRun{ID: "wr-process-router", JobID: "job-process-router", FolderID: "f-process-router", WorkflowDefID: "def", Status: "succeeded"})
+	mustCreateNodeRun(&NodeRun{ID: "nr-process-router-reader", WorkflowRunID: "wr-process-router", NodeID: "reader", NodeType: "db-subtree-reader", Sequence: 1, Status: "succeeded"})
+	mustCreateNodeRun(&NodeRun{ID: "nr-process-router-category", WorkflowRunID: "wr-process-router", NodeID: "router", NodeType: "category-router", Sequence: 2, Status: "succeeded"})
+	mustCreateNodeRun(&NodeRun{ID: "nr-process-router-move", WorkflowRunID: "wr-process-router", NodeID: "move", NodeType: "move-node", Sequence: 3, Status: "succeeded"})
+	mustSetWorkflowRunUpdatedAt("wr-process-router", "2026-01-01 00:00:09")
+
 	mustCreateWorkflowRun(&WorkflowRun{ID: "wr-process-derived", JobID: "job-process-derived", WorkflowDefID: "def", Status: "succeeded"})
 	mustCreateNodeRun(&NodeRun{ID: "nr-process-derived-move", WorkflowRunID: "wr-process-derived", NodeID: "move", NodeType: "move-node", Sequence: 1, Status: "succeeded"})
 	if _, err := database.ExecContext(ctx, `INSERT INTO processing_review_items (
@@ -386,6 +393,7 @@ id, workflow_run_id, job_id, folder_id, status, before_json, after_json, step_re
 		"f-not-run",
 		"f-classify",
 		"f-process",
+		"f-process-router",
 		"f-failed",
 		"f-wait",
 		"f-rolled",
@@ -421,6 +429,13 @@ id, workflow_run_id, job_id, folder_id, status, before_json, after_json, step_re
 	}
 	if got := summaries["f-process"].Classification.Status; got != "not_run" {
 		t.Fatalf("f-process classification = %q, want not_run", got)
+	}
+
+	if got := summaries["f-process-router"].Processing.Status; got != "succeeded" {
+		t.Fatalf("f-process-router processing = %q, want succeeded", got)
+	}
+	if got := summaries["f-process-router"].Classification.Status; got != "not_run" {
+		t.Fatalf("f-process-router classification = %q, want not_run", got)
 	}
 
 	if got := summaries["f-failed"].Processing.Status; got != "failed" {

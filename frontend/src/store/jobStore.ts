@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-import { getJobProgress, listJobs, type JobQueryParams } from '@/api/jobs'
+import { cancelJob as cancelJobRequest, getJobProgress, listJobs, type JobQueryParams } from '@/api/jobs'
 import { notifyFolderActivityUpdated } from '@/lib/folderActivityEvents'
 import type { Job, JobDoneEvent, JobProgress } from '@/types'
 
@@ -24,6 +24,7 @@ interface JobStore {
   handleJobProgress: (progress: JobProgress) => void
   handleJobDone: (payload: JobDoneEvent) => void
   handleJobError: (jobId: string, error: string) => void
+  cancelJob: (jobId: string) => Promise<void>
   startPolling: (jobId: string, context?: JobPollingContext) => void
   /** Poll a scan job and notify folderStore on completion (SSE fallback). */
   startScanPolling: (jobId: string) => void
@@ -92,6 +93,7 @@ export const useJobStore = create<JobStore>((set, get) => ({
   handleJobProgress(progress) {
     const existing = get().jobs.find((job) => job.id === progress.job_id)
     if (!existing) {
+      const createdAt = progress.started_at ?? progress.updated_at
       get().addJob({
         id: progress.job_id,
         type: 'scan',
@@ -101,9 +103,9 @@ export const useJobStore = create<JobStore>((set, get) => ({
         done: progress.done,
         failed: progress.failed,
         error: '',
-        started_at: progress.updated_at,
-        finished_at: null,
-        created_at: progress.updated_at,
+        started_at: progress.started_at ?? null,
+        finished_at: progress.finished_at ?? null,
+        created_at: createdAt,
         updated_at: progress.updated_at,
       })
       return
@@ -114,12 +116,15 @@ export const useJobStore = create<JobStore>((set, get) => ({
       done: progress.done,
       total: progress.total,
       failed: progress.failed,
+      started_at: progress.started_at ?? existing.started_at,
+      finished_at: progress.finished_at ?? existing.finished_at,
       updated_at: progress.updated_at,
     })
   },
 
   handleJobDone(payload) {
     const now = new Date().toISOString()
+    const updatedAt = payload.updated_at ?? payload.finished_at ?? now
     const existing = get().jobs.find((job) => job.id === payload.job_id)
     if (!existing) {
       get().addJob({
@@ -131,10 +136,10 @@ export const useJobStore = create<JobStore>((set, get) => ({
         done: payload.processed ?? payload.total,
         failed: payload.failed ?? 0,
         error: '',
-        started_at: now,
-        finished_at: now,
-        created_at: now,
-        updated_at: now,
+        started_at: payload.started_at ?? null,
+        finished_at: payload.finished_at ?? updatedAt,
+        created_at: payload.started_at ?? updatedAt,
+        updated_at: updatedAt,
       })
     } else {
       get().updateJob(payload.job_id, {
@@ -142,8 +147,9 @@ export const useJobStore = create<JobStore>((set, get) => ({
         done: payload.processed ?? existing.done,
         failed: payload.failed ?? existing.failed,
         total: payload.total,
-        finished_at: now,
-        updated_at: now,
+        started_at: payload.started_at ?? existing.started_at,
+        finished_at: payload.finished_at ?? existing.finished_at ?? updatedAt,
+        updated_at: updatedAt,
       })
     }
     get().stopPolling(payload.job_id)
@@ -152,6 +158,18 @@ export const useJobStore = create<JobStore>((set, get) => ({
   handleJobError(jobId, error) {
     get().updateJob(jobId, { status: 'failed', error })
     get().stopPolling(jobId)
+  },
+
+  async cancelJob(jobId) {
+    await cancelJobRequest(jobId)
+    get().updateJob(jobId, {
+      status: 'cancelled',
+      error: '用户停止任务',
+      finished_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    get().stopPolling(jobId)
+    void get().fetchJobs({ limit: get().limit })
   },
 
   startPolling(jobId, context) {

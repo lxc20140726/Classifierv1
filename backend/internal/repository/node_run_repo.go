@@ -188,11 +188,15 @@ func (r *SQLiteNodeRunRepository) UpdateFinish(ctx context.Context, id, status, 
 	res, err := r.db.ExecContext(
 		ctx,
 		`UPDATE node_runs
-SET status = ?, output_json = ?, error = ?, finished_at = CURRENT_TIMESTAMP
+SET status = ?,
+    output_json = ?,
+    error = ?,
+    finished_at = CASE WHEN ? = 'waiting_input' THEN NULL ELSE CURRENT_TIMESTAMP END
 WHERE id = ?`,
 		status,
 		nullableString(outputJSON),
 		nullableString(errMsg),
+		status,
 		id,
 	)
 	if err != nil {
@@ -201,6 +205,25 @@ WHERE id = ?`,
 
 	if err := assertRowsAffected(res); err != nil {
 		return fmt.Errorf("nodeRunRepo.UpdateFinish: %w", err)
+	}
+
+	return nil
+}
+
+func (r *SQLiteNodeRunRepository) FinishWaitingInput(ctx context.Context, id string) error {
+	res, err := r.db.ExecContext(
+		ctx,
+		`UPDATE node_runs
+SET finished_at = COALESCE(finished_at, CURRENT_TIMESTAMP)
+WHERE id = ? AND status = 'waiting_input'`,
+		id,
+	)
+	if err != nil {
+		return fmt.Errorf("nodeRunRepo.FinishWaitingInput: %w", err)
+	}
+
+	if err := assertRowsAffected(res); err != nil {
+		return fmt.Errorf("nodeRunRepo.FinishWaitingInput: %w", err)
 	}
 
 	return nil

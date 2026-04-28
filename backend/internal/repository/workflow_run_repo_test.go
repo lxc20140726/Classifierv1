@@ -57,6 +57,20 @@ func TestWorkflowRunRepository_CRUDFilterAndTransitions(t *testing.T) {
 		t.Fatalf("started_at/finished_at = %#v/%#v, want non-nil", updated.StartedAt, updated.FinishedAt)
 	}
 
+	if err := repo.UpdateStatus(ctx, "wr-2", "running", "node-p"); err != nil {
+		t.Fatalf("UpdateStatus(wr-2 running) error = %v", err)
+	}
+	if err := repo.UpdateStatus(ctx, "wr-2", "partial", "node-p"); err != nil {
+		t.Fatalf("UpdateStatus(partial) error = %v", err)
+	}
+	partial, err := repo.GetByID(ctx, "wr-2")
+	if err != nil {
+		t.Fatalf("GetByID(wr-2 partial) error = %v", err)
+	}
+	if partial.Status != "partial" || partial.FinishedAt == nil {
+		t.Fatalf("partial status/finished_at = %q/%#v, want partial/non-nil", partial.Status, partial.FinishedAt)
+	}
+
 	if err := repo.UpdateFailure(ctx, "wr-2", "node-f", "node crashed"); err != nil {
 		t.Fatalf("UpdateFailure() error = %v", err)
 	}
