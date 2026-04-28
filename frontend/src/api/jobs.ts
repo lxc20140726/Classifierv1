@@ -25,3 +25,7 @@ export function getJob(id: string) {
 export function getJobProgress(id: string) {
   return request<JobProgress>(`/jobs/${id}/progress`)
 }
+
+export function cancelJob(id: string) {
+  return request<{ cancelled: boolean }>(`/jobs/${id}/cancel`, { method: 'POST' })
+}

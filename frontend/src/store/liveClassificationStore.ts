@@ -33,6 +33,7 @@ function mapWorkflowStageToLiveStatus(stage: Folder['workflow_summary']['classif
     case 'failed':
     case 'partial':
     case 'rolled_back':
+    case 'cancelled':
       return 'failed'
     default:
       return 'completed'

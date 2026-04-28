@@ -51,9 +51,11 @@ func (s *stubJobRepository) IncrementProgress(_ context.Context, _ string, _, _ 
 }
 
 type stubWorkflowJobStarter struct {
-	jobID  string
-	err    error
-	inputs []service.StartWorkflowJobInput
+	jobID       string
+	err         error
+	cancelErr   error
+	cancelJobID string
+	inputs      []service.StartWorkflowJobInput
 }
 
 func (s *stubWorkflowJobStarter) StartJob(_ context.Context, input service.StartWorkflowJobInput) (string, error) {
@@ -65,6 +67,11 @@ func (s *stubWorkflowJobStarter) StartJob(_ context.Context, input service.Start
 		return s.jobID, nil
 	}
 	return "job-started", nil
+}
+
+func (s *stubWorkflowJobStarter) CancelJob(_ context.Context, jobID string) error {
+	s.cancelJobID = jobID
+	return s.cancelErr
 }
 
 type stubConfigRepository struct {
@@ -103,6 +110,7 @@ func setupJobRouter(h *JobHandler) *gin.Engine {
 	r.GET("/jobs", h.List)
 	r.GET("/jobs/:id", h.Get)
 	r.GET("/jobs/:id/progress", h.Progress)
+	r.POST("/jobs/:id/cancel", h.Cancel)
 	r.POST("/jobs", h.StartWorkflow)
 	return r
 }
@@ -306,6 +314,45 @@ func TestJobHandler_StartWorkflow(t *testing.T) {
 		}
 		if len(starter.inputs[0].FolderIDs) != 2 {
 			t.Fatalf("folder ids len = %d, want 2", len(starter.inputs[0].FolderIDs))
+		}
+	})
+}
+
+func TestJobHandler_Cancel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	t.Run("not configured", func(t *testing.T) {
+		router := setupJobRouter(NewJobHandler(&stubJobRepository{}))
+		req := httptest.NewRequest(http.MethodPost, "/jobs/job-1/cancel", nil)
+		resp := httptest.NewRecorder()
+		router.ServeHTTP(resp, req)
+		if resp.Code != http.StatusNotImplemented {
+			t.Fatalf("status = %d, want %d body=%s", resp.Code, http.StatusNotImplemented, resp.Body.String())
+		}
+	})
+
+	t.Run("success", func(t *testing.T) {
+		starter := &stubWorkflowJobStarter{}
+		router := setupJobRouter(NewJobHandlerWithWorkflow(&stubJobRepository{}, nil, starter, nil, "/default/source"))
+		req := httptest.NewRequest(http.MethodPost, "/jobs/job-2/cancel", nil)
+		resp := httptest.NewRecorder()
+		router.ServeHTTP(resp, req)
+		if resp.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d body=%s", resp.Code, http.StatusOK, resp.Body.String())
+		}
+		if starter.cancelJobID != "job-2" {
+			t.Fatalf("cancelJobID = %q, want job-2", starter.cancelJobID)
+		}
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		starter := &stubWorkflowJobStarter{cancelErr: repository.ErrNotFound}
+		router := setupJobRouter(NewJobHandlerWithWorkflow(&stubJobRepository{}, nil, starter, nil, "/default/source"))
+		req := httptest.NewRequest(http.MethodPost, "/jobs/missing/cancel", nil)
+		resp := httptest.NewRecorder()
+		router.ServeHTTP(resp, req)
+		if resp.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want %d body=%s", resp.Code, http.StatusNotFound, resp.Body.String())
 		}
 	})
 }

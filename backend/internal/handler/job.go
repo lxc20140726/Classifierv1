@@ -17,12 +17,17 @@ type WorkflowJobStarter interface {
 	StartJob(ctx context.Context, input service.StartWorkflowJobInput) (string, error)
 }
 
+type WorkflowJobCanceller interface {
+	CancelJob(ctx context.Context, jobID string) error
+}
+
 type JobHandler struct {
-	jobs             repository.JobRepository
-	folders          repository.FolderRepository
-	workflowStarter  WorkflowJobStarter
-	config           repository.ConfigRepository
-	defaultSourceDir string
+	jobs              repository.JobRepository
+	folders           repository.FolderRepository
+	workflowStarter   WorkflowJobStarter
+	workflowCanceller WorkflowJobCanceller
+	config            repository.ConfigRepository
+	defaultSourceDir  string
 }
 
 func NewJobHandler(jobRepo repository.JobRepository) *JobHandler {
@@ -37,12 +42,21 @@ func NewJobHandlerWithWorkflow(
 	defaultSourceDir string,
 ) *JobHandler {
 	return &JobHandler{
-		jobs:             jobRepo,
-		folders:          folderRepo,
-		workflowStarter:  workflowStarter,
-		config:           config,
-		defaultSourceDir: strings.TrimSpace(defaultSourceDir),
+		jobs:              jobRepo,
+		folders:           folderRepo,
+		workflowStarter:   workflowStarter,
+		workflowCanceller: workflowCancellerFromStarter(workflowStarter),
+		config:            config,
+		defaultSourceDir:  strings.TrimSpace(defaultSourceDir),
 	}
+}
+
+func workflowCancellerFromStarter(starter WorkflowJobStarter) WorkflowJobCanceller {
+	canceller, ok := starter.(WorkflowJobCanceller)
+	if !ok {
+		return nil
+	}
+	return canceller
 }
 
 func (h *JobHandler) List(c *gin.Context) {
@@ -110,12 +124,14 @@ func (h *JobHandler) Progress(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"job_id":     job.ID,
-		"status":     job.Status,
-		"done":       job.Done,
-		"total":      job.Total,
-		"failed":     job.Failed,
-		"updated_at": job.UpdatedAt,
+		"job_id":      job.ID,
+		"status":      job.Status,
+		"done":        job.Done,
+		"total":       job.Total,
+		"failed":      job.Failed,
+		"started_at":  job.StartedAt,
+		"finished_at": job.FinishedAt,
+		"updated_at":  job.UpdatedAt,
 	})
 }
 
@@ -156,6 +172,24 @@ func (h *JobHandler) StartWorkflow(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusAccepted, gin.H{"job_id": jobID})
+}
+
+func (h *JobHandler) Cancel(c *gin.Context) {
+	if h.workflowCanceller == nil {
+		c.JSON(http.StatusNotImplemented, gin.H{"error": "workflow canceller not configured"})
+		return
+	}
+
+	if err := h.workflowCanceller.CancelJob(c.Request.Context(), c.Param("id")); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "job not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to cancel job"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"cancelled": true})
 }
 
 func (h *JobHandler) resolveWorkflowSourceDir(ctx context.Context) string {

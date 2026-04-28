@@ -189,6 +189,7 @@ func (s *ScannerService) Scan(ctx context.Context, input ScanInput) (int, error)
 		"failed":    failed,
 		"total":     total,
 	}
+	completion = attachJobTiming(ctx, s.jobs, input.JobID, completion)
 	s.publish("scan.done", completion)
 	s.publish("job.done", completion)
 

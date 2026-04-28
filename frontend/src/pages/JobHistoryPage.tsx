@@ -130,6 +130,7 @@ const WF_STATUS_LABELS: Record<WorkflowRunStatus, string> = {
   partial: '部分完成',
   waiting_input: '待确认',
   rolled_back: '已回退',
+  cancelled: '已停止',
 }
 
 const WF_STATUS_STYLES: Record<WorkflowRunStatus, string> = {
@@ -140,6 +141,7 @@ const WF_STATUS_STYLES: Record<WorkflowRunStatus, string> = {
   partial: 'bg-yellow-300 text-yellow-900 border-2 border-foreground',
   waiting_input: 'bg-purple-300 text-purple-900 border-2 border-foreground',
   rolled_back: 'bg-orange-300 text-orange-900 border-2 border-foreground',
+  cancelled: 'bg-gray-300 text-gray-900 border-2 border-foreground',
 }
 
 const NODE_STATUS_LABELS: Record<NodeRunStatus, string> = {

@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useMemo, useState, useRef } from 'react'
 import {
   Clock,
   FileText,
@@ -34,6 +34,8 @@ import type {
   Folder,
   FolderStatus,
   Job,
+  NodeRun,
+  WorkflowRun,
   WorkflowDefinition,
   WorkflowGraph,
   WorkflowStageStatus,
@@ -101,6 +103,7 @@ const WORKFLOW_STATUS_COLOR: Record<WorkflowStageStatus, string> = {
   waiting_input: 'bg-yellow-300 text-yellow-900 border-2 border-foreground',
   partial: 'bg-yellow-300 text-yellow-900 border-2 border-foreground',
   rolled_back: 'bg-gray-300 text-gray-900 border-2 border-foreground',
+  cancelled: 'bg-gray-300 text-gray-900 border-2 border-foreground',
 }
 
 const CLASSIFICATION_WORKFLOW_LABEL: Record<WorkflowStageStatus, string> = {
@@ -111,6 +114,7 @@ const CLASSIFICATION_WORKFLOW_LABEL: Record<WorkflowStageStatus, string> = {
   waiting_input: '待确认',
   partial: '分类部分完成',
   rolled_back: '分类已回退',
+  cancelled: '分类已停止',
 }
 
 const PROCESSING_WORKFLOW_LABEL: Record<WorkflowStageStatus, string> = {
@@ -121,6 +125,7 @@ const PROCESSING_WORKFLOW_LABEL: Record<WorkflowStageStatus, string> = {
   waiting_input: '待确认',
   partial: '处理部分完成',
   rolled_back: '已回退',
+  cancelled: '处理已停止',
 }
 
 const ALL_CATEGORIES: Array<Category | ''> = ['', 'photo', 'video', 'mixed', 'manga', 'other']
@@ -202,7 +207,9 @@ function workflowMatchesLaunchMode(graphJSON: string, mode: FolderWorkflowLaunch
         .filter((nodeType) => nodeType !== ''),
     )
     if (mode === 'classification') {
-      return [...enabledTypes].some((nodeType) => CLASSIFICATION_NODE_TYPES.has(nodeType))
+      const hasClassification = [...enabledTypes].some((nodeType) => CLASSIFICATION_NODE_TYPES.has(nodeType))
+      const hasProcessing = [...enabledTypes].some((nodeType) => PROCESSING_NODE_TYPES.has(nodeType))
+      return hasClassification && !hasProcessing
     }
     return [...enabledTypes].some((nodeType) => PROCESSING_NODE_TYPES.has(nodeType))
   } catch {
@@ -237,6 +244,28 @@ const WORKFLOW_MODE_COLOR: Record<WorkflowMode, string> = {
   unknown: 'bg-gray-200 text-gray-900 border-2 border-foreground',
 }
 
+const WORKFLOW_RUN_STATUS_LABEL: Record<string, string> = {
+  pending: '等待中',
+  running: '进行中',
+  succeeded: '已完成',
+  failed: '失败',
+  partial: '部分完成',
+  waiting_input: '待确认',
+  rolled_back: '已回退',
+  cancelled: '已停止',
+}
+
+const WORKFLOW_RUN_STATUS_COLOR: Record<string, string> = {
+  pending: 'bg-gray-200 text-gray-900 border-2 border-foreground',
+  running: 'bg-blue-300 text-blue-900 border-2 border-foreground',
+  succeeded: 'bg-green-300 text-green-900 border-2 border-foreground',
+  failed: 'bg-red-300 text-red-900 border-2 border-foreground',
+  partial: 'bg-yellow-300 text-yellow-900 border-2 border-foreground',
+  waiting_input: 'bg-amber-200 text-amber-900 border-2 border-foreground',
+  rolled_back: 'bg-gray-300 text-gray-900 border-2 border-foreground',
+  cancelled: 'bg-gray-300 text-gray-900 border-2 border-foreground',
+}
+
 function getWorkflowModeFromGraph(graphJSON: string): WorkflowMode {
   try {
     const parsed = JSON.parse(graphJSON) as Partial<WorkflowGraph>
@@ -258,6 +287,14 @@ function getWorkflowModeFromGraph(graphJSON: string): WorkflowMode {
   } catch {
     return 'unknown'
   }
+}
+
+function getCurrentNodeRun(nodeRuns: NodeRun[]) {
+  const sorted = [...nodeRuns].sort((a, b) => b.sequence - a.sequence)
+  return sorted.find((nodeRun) => nodeRun.status === 'running')
+    ?? sorted.find((nodeRun) => nodeRun.status === 'waiting_input')
+    ?? sorted[0]
+    ?? null
 }
 
 function ScanProgressBanner() {
@@ -358,11 +395,19 @@ function RecentJobsPanel() {
 function BatchWorkflowProgressPanel({
   jobs,
   workflowDefs,
+  runsByJobId,
+  nodesByRunId,
   onOpenJob,
+  onCancelJob,
+  cancelingJobIds,
 }: {
   jobs: Job[]
   workflowDefs: WorkflowDefinition[]
+  runsByJobId: Record<string, WorkflowRun[]>
+  nodesByRunId: Record<string, NodeRun[]>
   onOpenJob: (jobId: string) => void
+  onCancelJob: (jobId: string) => void
+  cancelingJobIds: Set<string>
 }) {
   const workflowModeMap = workflowDefs.reduce<Record<string, WorkflowMode>>((acc, def) => {
     acc[def.id] = getWorkflowModeFromGraph(def.graph_json)
@@ -378,19 +423,24 @@ function BatchWorkflowProgressPanel({
       if (job.type !== 'workflow') return false
       if (TERMINAL_JOB_STATUS.has(job.status)) return false
       const folderCount = Array.isArray(job.folder_ids) ? job.folder_ids.length : 0
-      return folderCount > 1 || job.total > 1 || job.done > 1
+      return folderCount > 0 || job.total > 0
     })
     .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
 
   if (activeBatchJobs.length === 0) return null
 
   return (
-    <section className="border-2 border-foreground bg-card p-4 shadow-hard">
-      <div className="mb-4 flex items-center gap-2 border-b-2 border-foreground pb-2">
-        <Loader2 className="h-5 w-5 animate-spin text-foreground" />
-        <h3 className="text-base font-black tracking-tight">批量任务进度</h3>
+    <section className="mb-6 border-2 border-foreground bg-card p-4 shadow-hard">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b-2 border-foreground pb-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <Loader2 className="h-5 w-5 shrink-0 animate-spin text-foreground" />
+          <h3 className="text-base font-black tracking-tight">批量工作进度</h3>
+          <span className="border-2 border-foreground bg-background px-2 py-0.5 text-[10px] font-black">
+            {activeBatchJobs.length} 个任务
+          </span>
+        </div>
       </div>
-      <ul className="divide-y-2 divide-foreground">
+      <ul className="space-y-4">
         {activeBatchJobs.map((job) => {
           const progress = job.total > 0 ? Math.round((job.done / job.total) * 100) : 0
           const statusLabel = JOB_STATUS_LABEL[job.status] ?? job.status
@@ -400,47 +450,105 @@ function BatchWorkflowProgressPanel({
           const workflowName = job.workflow_def_id
             ? workflowNameMap[job.workflow_def_id] ?? `工作流 ${job.workflow_def_id}`
             : '工作流任务'
-          const folderCount = Array.isArray(job.folder_ids) ? job.folder_ids.length : 0
+          const folderTargets = job.folder_targets && job.folder_targets.length > 0
+            ? job.folder_targets
+            : (job.folder_ids ?? []).map((folderId) => ({ id: folderId, name: folderId, path: '' }))
+          const runs = runsByJobId[job.id] ?? []
 
           return (
-            <li key={job.id} className="space-y-2 py-3 first:pt-0 last:pb-0">
-              <div className="flex items-center justify-between gap-2">
-                <p className="truncate text-xs font-black" title={workflowName}>
-                  {workflowName}
-                </p>
-                <span className={cn('shrink-0 px-2 py-0.5 text-[10px] font-black', statusColor)}>
-                  {statusLabel}
-                </span>
+            <li key={job.id} className="border-2 border-foreground bg-background p-3 shadow-hard">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-black" title={workflowName}>
+                    {workflowName}
+                  </p>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <span className={cn('px-2 py-0.5 text-[10px] font-black', WORKFLOW_MODE_COLOR[mode])}>
+                      {WORKFLOW_MODE_LABEL[mode]}
+                    </span>
+                    <span className={cn('px-2 py-0.5 text-[10px] font-black', statusColor)}>
+                      {statusLabel}
+                    </span>
+                    <span className="text-[10px] font-bold text-muted-foreground">
+                      {job.done}/{job.total}（{progress}%）
+                    </span>
+                    {job.failed > 0 && (
+                      <span className="text-[10px] font-bold text-red-600">失败 {job.failed}</span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex shrink-0 flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => onOpenJob(job.id)}
+                    className="inline-flex items-center border-2 border-foreground bg-background px-2 py-1 text-[10px] font-bold transition-all hover:bg-foreground hover:text-background"
+                  >
+                    查看详情
+                  </button>
+                  <button
+                    type="button"
+                    disabled={cancelingJobIds.has(job.id)}
+                    onClick={() => onCancelJob(job.id)}
+                    className="inline-flex items-center border-2 border-red-900 bg-red-100 px-2 py-1 text-[10px] font-bold text-red-900 transition-all hover:bg-red-900 hover:text-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {cancelingJobIds.has(job.id) ? '停止中...' : '一键停止'}
+                  </button>
+                </div>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <span className={cn('px-2 py-0.5 text-[10px] font-black', WORKFLOW_MODE_COLOR[mode])}>
-                  {WORKFLOW_MODE_LABEL[mode]}
-                </span>
-                <span className="text-[10px] font-bold text-muted-foreground">
-                  目录 {folderCount > 0 ? folderCount : '?'} 个
-                </span>
-                <span className="text-[10px] font-bold text-muted-foreground">
-                  {job.done}/{job.total}（{progress}%）
-                </span>
-                {job.failed > 0 && (
-                  <span className="text-[10px] font-bold text-red-600">失败 {job.failed}</span>
-                )}
-              </div>
+
               {job.total > 0 && (
-                <div className="h-1.5 w-full overflow-hidden border-2 border-foreground bg-muted">
+                <div className="mt-3 h-2 w-full overflow-hidden border-2 border-foreground bg-muted">
                   <div className="h-full bg-foreground transition-all duration-300" style={{ width: `${progress}%` }} />
                 </div>
               )}
               {job.status === 'waiting_input' && (
                 <p className="text-[10px] font-bold text-amber-700">存在待确认节点，任务暂停等待输入。</p>
               )}
-              <button
-                type="button"
-                onClick={() => onOpenJob(job.id)}
-                className="inline-flex items-center border-2 border-foreground bg-background px-2 py-1 text-[10px] font-bold transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5"
-              >
-                查看详情
-              </button>
+
+              <div className="mt-3 grid gap-2 md:grid-cols-2">
+                {folderTargets.map((folderTarget) => {
+                  const run = runs.find((item) => item.folder_id === folderTarget.id)
+                  const nodeRuns = run ? nodesByRunId[run.id] ?? [] : []
+                  const currentNode = getCurrentNodeRun(nodeRuns)
+                  const runStatus = run?.status ?? 'pending'
+                  const nodePercent = currentNode?.progress_percent
+                  const nodePercentText = typeof nodePercent === 'number' ? `${nodePercent}%` : '-'
+                  const nodeProgressText = currentNode?.progress_stage
+                    ?? currentNode?.progress_message
+                    ?? (run ? '等待节点进度' : '等待运行创建')
+
+                  return (
+                    <div key={folderTarget.id} className="border-2 border-foreground bg-muted/20 p-2">
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="min-w-0 truncate text-xs font-black" title={folderTarget.name}>
+                          {folderTarget.name}
+                        </p>
+                        <span className={cn('shrink-0 px-1.5 py-0.5 text-[10px] font-black', WORKFLOW_RUN_STATUS_COLOR[runStatus])}>
+                          {WORKFLOW_RUN_STATUS_LABEL[runStatus] ?? runStatus}
+                        </span>
+                      </div>
+                      <p className="mt-1 truncate font-mono text-[10px] font-bold text-muted-foreground" title={folderTarget.path}>
+                        {folderTarget.path || folderTarget.id}
+                      </p>
+                      <div className="mt-2 flex items-center justify-between gap-2 text-[10px] font-bold text-muted-foreground">
+                        <span className="min-w-0 truncate">
+                          {currentNode?.node_id ?? '-'}{currentNode?.node_type ? ` · ${currentNode.node_type}` : ''}
+                        </span>
+                        <span className="shrink-0 tabular-nums">{nodePercentText}</span>
+                      </div>
+                      <div className="mt-1 h-1.5 w-full overflow-hidden border-2 border-foreground bg-background">
+                        <div
+                          className="h-full bg-foreground transition-all duration-300"
+                          style={{ width: `${typeof nodePercent === 'number' ? Math.max(0, Math.min(100, nodePercent)) : 0}%` }}
+                        />
+                      </div>
+                      <p className="mt-1 truncate text-[10px] font-bold text-muted-foreground" title={nodeProgressText}>
+                        {nodeProgressText}
+                      </p>
+                    </div>
+                  )
+                })}
+              </div>
             </li>
           )
         })}
@@ -862,6 +970,8 @@ export default function FolderListPage() {
   const suppressFolder = useFolderStore((s) => s.suppressFolder)
   const unsuppressFolder = useFolderStore((s) => s.unsuppressFolder)
   const startJobPolling = useJobStore((s) => s.startPolling)
+  const fetchJobs = useJobStore((s) => s.fetchJobs)
+  const cancelJob = useJobStore((s) => s.cancelJob)
   const workflowDefs = useWorkflowDefStore((s) => s.defs)
   const workflowDefsLoading = useWorkflowDefStore((s) => s.isLoading)
   const workflowDefsError = useWorkflowDefStore((s) => s.error)
@@ -872,6 +982,10 @@ export default function FolderListPage() {
   const approveAllPendingReviews = useWorkflowRunStore((s) => s.approveAllPendingReviews)
   const rollbackAllPendingReviews = useWorkflowRunStore((s) => s.rollbackAllPendingReviews)
   const jobs = useJobStore((s) => s.jobs)
+  const runsByJobId = useWorkflowRunStore((s) => s.runsByJobId)
+  const nodesByRunId = useWorkflowRunStore((s) => s.nodesByRunId)
+  const fetchRunsForJob = useWorkflowRunStore((s) => s.fetchRunsForJob)
+  const fetchRunDetail = useWorkflowRunStore((s) => s.fetchRunDetail)
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [activeFolderId, setActiveFolderId] = useState<string | null>(null)
@@ -884,6 +998,7 @@ export default function FolderListPage() {
   const [launchError, setLaunchError] = useState<string | null>(null)
   const [launchSuccessJobId, setLaunchSuccessJobId] = useState<string | null>(null)
   const [isLaunching, setIsLaunching] = useState(false)
+  const [cancelingJobIds, setCancelingJobIds] = useState<Set<string>>(new Set())
   const [isHandlingReviewShortcut, setIsHandlingReviewShortcut] = useState(false)
   const [isMobileTopBarHidden, setIsMobileTopBarHidden] = useState(false)
   const previousListKeyRef = useRef<string>('')
@@ -955,16 +1070,38 @@ export default function FolderListPage() {
   }, [fetchFolders, filters, page])
 
   useEffect(() => {
-    const hasActiveBatchWorkflowJob = jobs.some((job) => {
-      if (job.type !== 'workflow') return false
-      if (TERMINAL_JOB_STATUS.has(job.status)) return false
-      const folderCount = Array.isArray(job.folder_ids) ? job.folder_ids.length : 0
-      return folderCount > 1 || job.total > 1 || job.done > 1
-    })
-    if (!hasActiveBatchWorkflowJob || workflowDefs.length > 0 || workflowDefsRequestedRef.current) return
+    void fetchJobs({ limit: 10 })
+  }, [fetchJobs])
+
+  const activeWorkflowJobs = useMemo(() => jobs.filter((job) => {
+    if (job.type !== 'workflow') return false
+    if (TERMINAL_JOB_STATUS.has(job.status)) return false
+    const folderCount = Array.isArray(job.folder_ids) ? job.folder_ids.length : 0
+    return folderCount > 0 || job.total > 0
+  }), [jobs])
+
+  useEffect(() => {
+    if (activeWorkflowJobs.length === 0 || workflowDefs.length > 0 || workflowDefsRequestedRef.current) return
     workflowDefsRequestedRef.current = true
     void fetchWorkflowDefs()
-  }, [fetchWorkflowDefs, jobs, workflowDefs.length])
+  }, [activeWorkflowJobs.length, fetchWorkflowDefs, workflowDefs.length])
+
+  useEffect(() => {
+    activeWorkflowJobs.forEach((job) => {
+      void fetchRunsForJob(job.id, { limit: 100 })
+    })
+  }, [activeWorkflowJobs, fetchRunsForJob])
+
+  useEffect(() => {
+    activeWorkflowJobs.forEach((job) => {
+      const runs = runsByJobId[job.id] ?? []
+      runs.forEach((run) => {
+        if (run.status === 'pending' || run.status === 'running' || run.status === 'waiting_input') {
+          void fetchRunDetail(run.id)
+        }
+      })
+    })
+  }, [activeWorkflowJobs, fetchRunDetail, runsByJobId])
 
   // GSAP Stagger Animation for items
   useEffect(() => {
@@ -1129,12 +1266,30 @@ export default function FolderListPage() {
     }
   }
 
+  async function handleCancelJob(jobId: string) {
+    setCancelingJobIds((prev) => new Set(prev).add(jobId))
+    try {
+      await cancelJob(jobId)
+      await fetchJobs({ limit: 10 })
+    } finally {
+      setCancelingJobIds((prev) => {
+        const next = new Set(prev)
+        next.delete(jobId)
+        return next
+      })
+    }
+  }
+
   const launchSelectedFolders = folders.filter((folder) => launchDialog.folderIds.includes(folder.id))
   const launchModeLabel = launchDialog.mode === 'classification'
     ? '批量分类'
     : launchDialog.mode === 'processing'
       ? '批量处理'
       : '启动工作流'
+  const directBatchWorkflowDetail = launchDialog.mode === 'classification' || launchDialog.mode === 'processing'
+  const selectedWorkflowNodeCount = selectedWorkflowDef
+    ? countEnabledNodes(selectedWorkflowDef.graph_json)
+    : 0
 
   return (
     <>
@@ -1168,6 +1323,15 @@ export default function FolderListPage() {
             )}
             {isScanning ? '扫描中' : '扫描'}
           </button>
+          {folders.length > 0 && (
+            <button
+              type="button"
+              onClick={toggleSelectAll}
+              className="inline-flex min-w-0 items-center gap-2 border-2 border-foreground bg-background px-3 py-2 text-sm font-bold transition-all hover:bg-foreground hover:text-background hover:shadow-hard hover:-translate-y-0.5 sm:px-4 lg:hidden"
+            >
+              {selectedIds.size === folders.length ? '取消全选' : '全选'}
+            </button>
+          )}
           {selectedIds.size > 0 && (
             <>
               <button
@@ -1222,6 +1386,16 @@ export default function FolderListPage() {
       </div>
 
       <ScanProgressBanner />
+
+      <BatchWorkflowProgressPanel
+        jobs={jobs}
+        workflowDefs={workflowDefs}
+        runsByJobId={runsByJobId}
+        nodesByRunId={nodesByRunId}
+        onOpenJob={(jobId) => navigate(buildJobHistoryLink(jobId))}
+        onCancelJob={(jobId) => void handleCancelJob(jobId)}
+        cancelingJobIds={cancelingJobIds}
+      />
 
       <div className="mb-6 flex flex-wrap gap-2 sm:gap-3">
         {ALL_CATEGORIES.map((c) => (
@@ -1432,11 +1606,6 @@ export default function FolderListPage() {
         </div>
 
         <div className="flex w-full flex-col gap-6 xl:w-80 xl:shrink-0">
-          <BatchWorkflowProgressPanel
-            jobs={jobs}
-            workflowDefs={workflowDefs}
-            onOpenJob={(jobId) => navigate(buildJobHistoryLink(jobId))}
-          />
           <RecentJobsPanel />
           <RecentLogsPanel />
         </div>
@@ -1453,52 +1622,102 @@ export default function FolderListPage() {
               {launchSelectedFolders.length > 3 ? ` +${launchSelectedFolders.length - 3}` : ''}
             </p>
 
-            <div className="space-y-3">
-              <p className="text-xs font-black tracking-wider">选择工作流定义</p>
-              <div className="max-h-72 space-y-2 overflow-auto border-2 border-foreground bg-muted/20 p-2">
+            {directBatchWorkflowDetail ? (
+              <div className="space-y-3">
+                <p className="text-xs font-black tracking-wider">工作流详情</p>
                 {workflowDefsLoading ? (
-                  <p className="py-8 text-center text-xs font-bold text-muted-foreground">工作流加载中...</p>
+                  <p className="border-2 border-foreground bg-muted/20 py-8 text-center text-xs font-bold text-muted-foreground">工作流加载中...</p>
                 ) : workflowDefsError ? (
-                  <p className="py-8 text-center text-xs font-bold text-red-700">{workflowDefsError}</p>
-                ) : workflowLaunchEntries.length === 0 ? (
-                  <p className="py-8 text-center text-xs font-bold text-muted-foreground">当前入口没有可用工作流</p>
-                ) : (
-                  workflowLaunchEntries.map(({ def, launchability }) => {
-                    const disabled = !launchability.canLaunch
-                    const selected = selectedWorkflowDefId === def.id
-                    return (
-                      <button
-                        key={def.id}
-                        type="button"
-                        disabled={disabled}
-                        onClick={() => {
-                          setSelectedWorkflowDefId(def.id)
-                          setLaunchError(null)
-                          setLaunchSuccessJobId(null)
-                        }}
-                        className={cn(
-                          'w-full border-2 px-3 py-3 text-left transition-all',
-                          selected
-                            ? 'border-foreground bg-foreground text-background shadow-hard'
-                            : 'border-foreground bg-background hover:bg-muted',
-                          disabled && 'cursor-not-allowed opacity-60 hover:bg-background',
-                        )}
-                      >
-                        <div className="flex items-center justify-between gap-3">
-                          <span className="truncate text-sm font-black">{def.name}</span>
-                          <span className="shrink-0 font-mono text-xs font-bold">v{def.version}</span>
-                        </div>
-                        <p className={cn('mt-2 text-xs font-bold', selected ? 'text-background/90' : 'text-muted-foreground')}>
-                          {launchability.canLaunch
-                            ? `可快捷启动（${launchability.enabledPickerCount} 个 folder-picker）`
-                            : (launchability.error ?? '该工作流暂不可快捷启动')}
+                  <p className="border-2 border-red-900 bg-red-100 py-8 text-center text-xs font-bold text-red-700">{workflowDefsError}</p>
+                ) : selectedWorkflowDef && selectedWorkflowLaunchability ? (
+                  <div className="border-2 border-foreground bg-muted/20 p-3 shadow-hard">
+                    <div className="flex flex-wrap items-start justify-between gap-3 border-b-2 border-foreground pb-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-base font-black" title={selectedWorkflowDef.name}>
+                          {selectedWorkflowDef.name}
                         </p>
-                      </button>
-                    )
-                  })
+                        <p className="mt-1 text-xs font-bold text-muted-foreground">
+                          将用于 {launchDialog.folderIds.length} 个文件夹
+                        </p>
+                      </div>
+                      <span className="border-2 border-foreground bg-background px-2 py-1 font-mono text-xs font-black">
+                        v{selectedWorkflowDef.version}
+                      </span>
+                    </div>
+                    <div className="mt-3 grid gap-2 text-xs font-bold sm:grid-cols-3">
+                      <div className="border-2 border-foreground bg-background p-2">
+                        <p className="text-muted-foreground">可用入口</p>
+                        <p className="mt-1 text-sm font-black">{selectedWorkflowLaunchability.enabledPickerCount} 个</p>
+                      </div>
+                      <div className="border-2 border-foreground bg-background p-2">
+                        <p className="text-muted-foreground">启用节点</p>
+                        <p className="mt-1 text-sm font-black">{selectedWorkflowNodeCount}</p>
+                      </div>
+                      <div className="border-2 border-foreground bg-background p-2">
+                        <p className="text-muted-foreground">状态</p>
+                        <p className="mt-1 text-sm font-black">
+                          {selectedWorkflowLaunchability.canLaunch ? '可快捷启动' : '不可启动'}
+                        </p>
+                      </div>
+                    </div>
+                    {selectedWorkflowDef.description && (
+                      <p className="mt-3 text-xs font-bold text-muted-foreground">{selectedWorkflowDef.description}</p>
+                    )}
+                  </div>
+                ) : (
+                  <p className="border-2 border-foreground bg-muted/20 py-8 text-center text-xs font-bold text-muted-foreground">
+                    当前入口没有可用工作流
+                  </p>
                 )}
               </div>
-            </div>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-xs font-black tracking-wider">选择工作流定义</p>
+                <div className="max-h-72 space-y-2 overflow-auto border-2 border-foreground bg-muted/20 p-2">
+                  {workflowDefsLoading ? (
+                    <p className="py-8 text-center text-xs font-bold text-muted-foreground">工作流加载中...</p>
+                  ) : workflowDefsError ? (
+                    <p className="py-8 text-center text-xs font-bold text-red-700">{workflowDefsError}</p>
+                  ) : workflowLaunchEntries.length === 0 ? (
+                    <p className="py-8 text-center text-xs font-bold text-muted-foreground">当前入口没有可用工作流</p>
+                  ) : (
+                    workflowLaunchEntries.map(({ def, launchability }) => {
+                      const disabled = !launchability.canLaunch
+                      const selected = selectedWorkflowDefId === def.id
+                      return (
+                        <button
+                          key={def.id}
+                          type="button"
+                          disabled={disabled}
+                          onClick={() => {
+                            setSelectedWorkflowDefId(def.id)
+                            setLaunchError(null)
+                            setLaunchSuccessJobId(null)
+                          }}
+                          className={cn(
+                            'w-full border-2 px-3 py-3 text-left transition-all',
+                            selected
+                              ? 'border-foreground bg-foreground text-background shadow-hard'
+                              : 'border-foreground bg-background hover:bg-muted',
+                            disabled && 'cursor-not-allowed opacity-60 hover:bg-background',
+                          )}
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="truncate text-sm font-black">{def.name}</span>
+                            <span className="shrink-0 font-mono text-xs font-bold">v{def.version}</span>
+                          </div>
+                          <p className={cn('mt-2 text-xs font-bold', selected ? 'text-background/90' : 'text-muted-foreground')}>
+                            {launchability.canLaunch
+                              ? `可快捷启动（${launchability.enabledPickerCount} 个 folder-picker）`
+                              : (launchability.error ?? '该工作流暂不可快捷启动')}
+                          </p>
+                        </button>
+                      )
+                    })
+                  )}
+                </div>
+              </div>
+            )}
 
             {!workflowDefsLoading && !workflowDefsError && workflowLaunchEntries.length > 0 && launchableWorkflowCount === 0 && (
               <p className="mt-4 border-2 border-amber-900 bg-amber-100 px-4 py-3 text-sm font-bold text-amber-900">

@@ -165,6 +165,7 @@ func main() {
 			jobs.POST("", jobHandler.StartWorkflow)
 			jobs.GET("/:id", jobHandler.Get)
 			jobs.GET("/:id/progress", jobHandler.Progress)
+			jobs.POST("/:id/cancel", jobHandler.Cancel)
 			jobs.GET("/:id/workflow-runs", workflowRunHandler.ListByJob)
 		}
 

@@ -24,6 +24,7 @@ const (
 	workflowStageStatusWaitingInput = "waiting_input"
 	workflowStageStatusPartial      = "partial"
 	workflowStageStatusRolledBack   = "rolled_back"
+	workflowStageStatusCancelled    = "cancelled"
 	folderObservationSelectColumns  = "id, folder_id, path, source_dir, relative_path, is_current, first_seen_at, last_seen_at"
 	folderSelectColumns             = `id, path, source_dir, relative_path, identity_fingerprint, name, category, category_source, status,
 	image_count, video_count, other_file_count, has_other_files, total_files, total_size, marked_for_move,
@@ -473,11 +474,8 @@ func (r *SQLiteFolderRepository) populateClassificationWorkflowSummaries(ctx con
 		'file-tree-classifier',
 		'confidence-check',
 		'subtree-aggregator',
-		'classification-reader',
-		'db-subtree-reader',
 		'classification-db-result-preview',
-		'classification-writer',
-		'category-router'
+		'classification-writer'
 	) THEN 1 ELSE 0 END) AS has_classification,
 	MAX(CASE WHEN nr.node_type = 'classification-writer' AND nr.status = 'succeeded' THEN 1 ELSE 0 END) AS classification_writer_succeeded
 FROM (
@@ -500,11 +498,8 @@ HAVING MAX(CASE WHEN m.source_kind = 'snapshot' THEN 1 ELSE 0 END) = 1
 		'file-tree-classifier',
 		'confidence-check',
 		'subtree-aggregator',
-		'classification-reader',
-		'db-subtree-reader',
 		'classification-db-result-preview',
-		'classification-writer',
-		'category-router'
+		'classification-writer'
 	) THEN 1 ELSE 0 END) = 1
 ORDER BY wr.updated_at DESC, wr.created_at DESC`,
 		args...,
@@ -1161,6 +1156,8 @@ func mapWorkflowRunStatusToStageStatus(status string) string {
 		return workflowStageStatusPartial
 	case "rolled_back":
 		return workflowStageStatusRolledBack
+	case "cancelled":
+		return workflowStageStatusCancelled
 	case "running", "pending":
 		return workflowStageStatusRunning
 	default:

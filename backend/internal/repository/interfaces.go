@@ -72,6 +72,7 @@ type NodeRunRepository interface {
 	GetWaitingInputByWorkflowRunID(ctx context.Context, workflowRunID string) (*NodeRun, error)
 	UpdateStart(ctx context.Context, id, inputJSON string) error
 	UpdateFinish(ctx context.Context, id, status, outputJSON, errMsg string) error
+	FinishWaitingInput(ctx context.Context, id string) error
 	UpdateResumeData(ctx context.Context, nodeRunID, resumeData string) error
 	SetResumeToken(ctx context.Context, nodeRunID, token string) error
 }

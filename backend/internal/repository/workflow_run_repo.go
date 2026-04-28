@@ -126,7 +126,7 @@ SET status = ?,
 	last_node_id = ?,
 	error = CASE WHEN ? = 'failed' THEN error ELSE '' END,
 	started_at = CASE WHEN ? = 'running' THEN COALESCE(started_at, CURRENT_TIMESTAMP) ELSE started_at END,
-	finished_at = CASE WHEN ? IN ('succeeded', 'failed', 'rolled_back') THEN CURRENT_TIMESTAMP ELSE finished_at END,
+	finished_at = CASE WHEN ? IN ('succeeded', 'failed', 'partial', 'rolled_back', 'cancelled') THEN CURRENT_TIMESTAMP ELSE finished_at END,
 	updated_at = CURRENT_TIMESTAMP
 WHERE id = ?`,
 		status,
