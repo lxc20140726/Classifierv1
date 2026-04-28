@@ -2213,7 +2213,7 @@ func TestCompressNodeExecutorIncludesUppercaseImagesAndRejectsEmptyArchives(t *t
 		}
 	})
 
-	t.Run("empty_archive_is_error_and_partial_file_is_removed", func(t *testing.T) {
+	t.Run("empty_archive_is_skipped_and_partial_file_is_removed", func(t *testing.T) {
 		t.Parallel()
 
 		root := t.TempDir()
@@ -2224,7 +2224,7 @@ func TestCompressNodeExecutorIncludesUppercaseImagesAndRejectsEmptyArchives(t *t
 			t.Fatalf("os.WriteFile(source) error = %v", err)
 		}
 
-		_, err := newCompressNodeExecutor(fs.NewOSAdapter()).Execute(context.Background(), NodeExecutionInput{
+		out, err := newCompressNodeExecutor(fs.NewOSAdapter()).Execute(context.Background(), NodeExecutionInput{
 			Node: repository.WorkflowGraphNode{
 				Type: "compress-node",
 				Config: map[string]any{
@@ -2236,11 +2236,25 @@ func TestCompressNodeExecutorIncludesUppercaseImagesAndRejectsEmptyArchives(t *t
 				"items": []ProcessingItem{{SourcePath: sourcePath, FolderName: "album", TargetName: "album"}},
 			}),
 		})
-		if err == nil {
-			t.Fatalf("Execute() error = nil, want no matched files error")
+		if err != nil {
+			t.Fatalf("Execute() error = %v", err)
 		}
-		if !stringsContains(err.Error(), "no files matched include_patterns") {
-			t.Fatalf("error = %q, want no files matched include_patterns", err.Error())
+		if out.Status != ExecutionSuccess {
+			t.Fatalf("status = %q, want %q", out.Status, ExecutionSuccess)
+		}
+		archiveItems := out.Outputs["archive_items"].Value.([]ProcessingItem)
+		if len(archiveItems) != 0 {
+			t.Fatalf("len(archive_items) = %d, want 0", len(archiveItems))
+		}
+		stepResults := out.Outputs["step_results"].Value.([]ProcessingStepResult)
+		if len(stepResults) != 1 {
+			t.Fatalf("len(step_results) = %d, want 1", len(stepResults))
+		}
+		if stepResults[0].Status != "skipped" {
+			t.Fatalf("step_results[0].Status = %q, want skipped", stepResults[0].Status)
+		}
+		if !stringsContains(stepResults[0].Error, "no files matched include_patterns") {
+			t.Fatalf("step_results[0].Error = %q, want no files matched include_patterns", stepResults[0].Error)
 		}
 		if pathExists(t, filepath.Join(archiveDir, "album.zip")) {
 			t.Fatalf("partial archive should be removed")

@@ -46,11 +46,10 @@ func (e *compressNodeExecutor) Schema() NodeSchema {
 		},
 		Outputs: []PortDef{
 			{Name: "items", Type: PortTypeProcessingItemList, RequiredOutput: true, Description: "已处理的处理项列表"},
-			{Name: "archive_items", Type: PortTypeProcessingItemList, RequiredOutput: true, Description: "压缩产物处理项列表"},
+			{Name: "archive_items", Type: PortTypeProcessingItemList, RequiredOutput: true, AllowEmpty: true, Description: "压缩产物处理项列表"},
 		},
 	}
 }
-
 func (e *compressNodeExecutor) Execute(ctx context.Context, input NodeExecutionInput) (NodeExecutionOutput, error) {
 	items, ok := categoryRouterExtractItems(input.Inputs)
 	if !ok || len(items) == 0 {
@@ -107,6 +106,7 @@ func (e *compressNodeExecutor) Execute(ctx context.Context, input NodeExecutionI
 	}
 
 	tasks := make([]compressTask, 0, len(uniqueItems))
+	stepResults := make([]ProcessingStepResult, 0, len(uniqueItems))
 	ensuredDirs := map[string]struct{}{}
 	for _, item := range uniqueItems {
 		sourcePath := processingItemCurrentPath(item)
@@ -150,7 +150,15 @@ func (e *compressNodeExecutor) Execute(ctx context.Context, input NodeExecutionI
 			return NodeExecutionOutput{}, fmt.Errorf("%s.Execute: collect archive files for %q: %w", e.Type(), sourcePath, err)
 		}
 		if len(files) == 0 {
-			return NodeExecutionOutput{}, fmt.Errorf("%s.Execute: no files matched include_patterns in %q", e.Type(), sourcePath)
+			stepResults = append(stepResults, ProcessingStepResult{
+				FolderID:   strings.TrimSpace(item.FolderID),
+				SourcePath: sourcePath,
+				NodeType:   input.Node.Type,
+				NodeLabel:  strings.TrimSpace(input.Node.Label),
+				Status:     "skipped",
+				Error:      "no files matched include_patterns",
+			})
+			continue
 		}
 		tasks = append(tasks, compressTask{
 			item:        item,
@@ -166,7 +174,14 @@ func (e *compressNodeExecutor) Execute(ctx context.Context, input NodeExecutionI
 		totalFiles += len(task.files)
 	}
 	if totalFiles <= 0 {
-		return NodeExecutionOutput{}, fmt.Errorf("%s.Execute: no files matched include_patterns", e.Type())
+		return NodeExecutionOutput{
+			Outputs: map[string]TypedValue{
+				"items":         {Type: PortTypeProcessingItemList, Value: uniqueItems},
+				"archive_items": {Type: PortTypeProcessingItemList, Value: []ProcessingItem{}},
+				"step_results":  {Type: PortTypeProcessingStepResultList, Value: stepResults},
+			},
+			Status: ExecutionSuccess,
+		}, nil
 	}
 
 	if input.ProgressFn != nil {
@@ -179,7 +194,6 @@ func (e *compressNodeExecutor) Execute(ctx context.Context, input NodeExecutionI
 		})
 	}
 
-	stepResults := make([]ProcessingStepResult, 0, len(uniqueItems))
 	archiveItems := make([]ProcessingItem, 0, len(uniqueItems))
 	archives := make([]string, 0, len(uniqueItems))
 	var mu sync.Mutex
